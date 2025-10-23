@@ -1,0 +1,13 @@
+# Loudspeaker Acoustic Holography Scanner – Python dependencies
+# --------------------------------------------------------------
+# Install all packages with:
+#     pip install -r requirements.txt
+
+
+numpy            # Core array and linear algebra functions
+scipy            # FFTs, filters, Bessel/Hankel functions, interpolation
+pandas           # CSV and table-style data manipulation
+soundfile        # Read/write WAV files via libsndfile backend
+matplotlib       # Graphs, plots, and optional 3D visualisation (mpl_toolkits)
+h5py             # Read/write .h5 coefficient data
+sounddevice      # ASIO/PortAudio interface for sweep capture
