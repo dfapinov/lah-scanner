@@ -10,7 +10,7 @@ I provide this code with the hope that other audio hobbyists can complete the pr
 > Please feel free to fork it or re-use code — just give attribution.
 
 ---
-![Main system cartoon](image/main_cartoon_small.png)
+![Main cartoon](images/main_cartoon_small.png)
 
 ## What It Does
 
@@ -123,6 +123,7 @@ If you use or modify this code, please credit the original author.
 ---
 
 ⭐ **Enjoy exploring loudspeaker acoustics and spatial sound-field analysis!**
+
 
 
 
