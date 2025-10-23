@@ -108,9 +108,10 @@ Converts complex pressure data from Stage 3 back into time-domain impulse respon
 
 - **Build hardware** for taking impulse response measurements around the loudspeaker.
 - **Create a robotic driver script** (G-code over USB serial).
-- **Develop a simple GUI** so non–command-line users can operate the pipeline.
-    
+- **Develop a simple GUI** so non–command-line users can operate the pipeline.  
+
 See the file recommendations.md for suggestions to complete the project.
+
 ---
 
 ## License & Attribution
