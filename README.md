@@ -38,7 +38,8 @@ Example: python ir_gen_piston.py
 
 Below is a brief summary of each script and what it does. 
  
-For detailed explanations and user settings, ***see the code comments***.
+For detailed explanations and user settings, ***see the code comments***.  
+
 Additionally, see help_notes.md
 
 The scripts are divided into two groups: **Capture** and **Process**.
