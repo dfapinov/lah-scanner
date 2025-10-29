@@ -11,7 +11,7 @@ I provide this code with the hope that other audio hobbyists can complete the pr
 
 ---
 
-![Project Image](image/main_cartoon_small.png)
+![Project Image](images/main_cartoon_small.png)
 
 
 ## What It Does
@@ -26,7 +26,7 @@ This anechoic sound field can be **projected to any point in space** (outside th
 
 The scripts presented here make this possible.
 
-![Measurment Grid Illustration](image/synth_ir.png)
+![Measurment Grid Illustration](images/synth_ir.png)
 
 ---
 
@@ -147,4 +147,4 @@ If you use or modify this code, please credit the original author.
 
 ***[ Dm17rY F4pp1n0v ]***
 
-![Impulse Waveform](image/ir_thin.png)
+![Impulse Waveform](images/ir_thin.png)
