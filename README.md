@@ -32,7 +32,8 @@ The scripts presented here make this possible.
 
 ## Code Overview
 
-Scipts are mostly self-contained and can be run directly from the command pront.
+Scipts are mostly self-contained and can be run directly from the command prompt.  
+
 Example: python ir_gen_piston.py
 
 Below is a brief summary of each script and what it does. 
