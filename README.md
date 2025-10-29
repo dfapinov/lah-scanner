@@ -11,6 +11,9 @@ I provide this code with the hope that other audio hobbyists can complete the pr
 
 ---
 
+![Project Image](image/main_cartoon_small.png)
+
+
 ## What It Does
 
 The LAH Scanner project is designed to capture impulse responses (IRs) of a loudspeaker at many positions arranged on a cylindrical measurement grid around the device under test.
@@ -22,6 +25,8 @@ From this data, the sound field originating from the loudspeaker (internal to th
 This anechoic sound field can be **projected to any point in space** (outside the original grid), allowing the full 3D directivity, frequency response, and phase to be reconstructed at any desired distance or angle.
 
 The scripts presented here make this possible.
+
+![Measurment Grid Illustration](image/synth_ir.png)
 
 ---
 
@@ -141,3 +146,5 @@ If you use or modify this code, please credit the original author.
 ⭐ **Enjoy exploring loudspeaker acoustics and spatial sound-field analysis!**
 
 ***[ Dm17rY F4pp1n0v ]***
+
+![Impulse Waveform](image/ir_thin.png)
