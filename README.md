@@ -10,11 +10,10 @@ I provide this code with the hope that other audio hobbyists can complete the pr
 > Please feel free to fork it or re-use code — just give attribution.
 
 ---
-![Main cartoon](images/main_cartoon_small.png)
 
 ## What It Does
 
-The LAH Scanner project is designed to capture impulse responses (IRs) of a loudspeaker at many positions arranged on a cylindrical measurement point grid around the device under test.
+The LAH Scanner project is designed to capture impulse responses (IRs) of a loudspeaker at many positions arranged on a cylindrical measurement grid around the device under test.
 
 These IRs are processed through **spherical harmonic expansion (SHE)**, which uses harmonic orders to describe the amplitude, phase, and direction of the sound field mathematically.
 
@@ -28,8 +27,13 @@ The scripts presented here make this possible.
 
 ## Code Overview
 
-Below is a brief summary of each script and what it does.  
-For detailed explanations and user settings, see the code comments.
+Scipts are mostly self-contained and can be run directly from the command pront.
+Example: python ir_gen_piston.py
+
+Below is a brief summary of each script and what it does. 
+ 
+For detailed explanations and user settings, ***see the code comments***.
+Additionally, see help_notes.md
 
 The scripts are divided into two groups: **Capture** and **Process**.
 
@@ -104,14 +108,26 @@ Converts complex pressure data from Stage 3 back into time-domain impulse respon
 | `sounddevice` | ASIO/PortAudio interface for sweep capture |
 
 ---
+# Installation
+
+1. Clone or copy the project to any directory on your system.  
+2. Open a terminal in that directory.  
+3. Run the following command to install all required dependencies:  
+ 
+   pip install -r requirements.txt
+   
+Start by runnining ir_gen_piston.py
+
+This will create idealized test data that you can use to explore the full processing pipeline.
+
+---
 
 ## What Still Needs To Be Done
 
 - **Build hardware** for taking impulse response measurements around the loudspeaker.
 - **Create a robotic driver script** (G-code over USB serial).
-- **Develop a simple GUI** so non–command-line users can operate the pipeline.  
-
-See the file recommendations.md for suggestions to complete the project.
+- **Develop a simple GUI** so non–command-line users can operate the pipeline.
+- **Develop script to extract anechoic distortion data** see recommendations.md with process overview.
 
 ---
 
@@ -125,9 +141,3 @@ If you use or modify this code, please credit the original author.
 ⭐ **Enjoy exploring loudspeaker acoustics and spatial sound-field analysis!**
 
 ***[ Dm17rY F4pp1n0v ]***
-
-
-
-
-
-
