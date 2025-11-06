@@ -48,9 +48,21 @@ At 48 kHz, filtering near the 24 kHz Nyquist limit can distort the phase and neg
 
 `pre_sil` adds safety silence before the sweep.  
 `post_sil` must be long enough for full latency capture (if the sweep cuts off early, increase this).  
-Set `SAVE_MIC_LOOP_SIG = True` to save raw sweep recordings for inspection.  
+Set `debug_saves = True` to save raw sweep recordings for inspection.  
 
 If audio glitches occur, adjust the buffer size in your audio driver to match `BLOCKSIZE`, or reduce `BLOCKSIZE` to feed the buffer more frequently.
+
+# Debug Output Files (`debug_saves = True`)
+
+| File | Description |
+|------|--------------|
+| `excitation_signal.wav` | Original digital log sweep played through the loudspeaker channel.|
+| `<base>_mic_raw.wav` | Unprocessed mic capture. | 
+| `<base>_mic_aligned.wav` | Mic signal time-aligned to excitation, via loopback marker. |
+| `<base>_mic_conditioned.wav` | Pre and post gated mic signal. |
+| `<base>_loop_raw.wav` | Raw loopback signal (barker timeing marker. |
+| `<base>_loop_aligned.wav` | Loopback signal time-aligned to excitation, via correlation filter. |
+| `<base>_ir.wav` | Final gated impulse response generated from mic conditioned and exitation signal. |
 
 ---
 
