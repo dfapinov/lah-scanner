@@ -35,7 +35,7 @@ from config_capture import (        # import all user-configured parameters from
     OUT_DEV,                        # integer device index for output (speaker+reference)
     IN_DEV,                         # integer device index for input  (mic+loopback)
     OUT_CH_SPKR,                    # output channel index that drives the loudspeaker
-    OUT_CH_REF,                     # output channel index that carries the reference sweep
+    OUT_CH_REF,                     # output channel index that carries the reference sweep/marker
     IN_CH_MIC,                      # input  channel index for the measurement microphone
     IN_CH_LOOP,                     # input  channel index for the loopback/reference
 
@@ -46,8 +46,8 @@ from config_capture import (        # import all user-configured parameters from
     F2_HZ,                          # end frequency of sweep (Hz); None → auto (≈0.48*FS)
     SWEEP_LEVEL_DBFS,               # sweep level in dB relative to full scale
     FADE_MS,                        # Hann fade length at start/end of sweep (ms)
-    PRE_SIL_MS,                     # leading silence before sweep (ms)
-    POST_SIL_MS,                    # trailing silence after sweep (ms)
+    PRE_SIL_MS,                     # leading silence before sweep/marker (ms)
+    POST_SIL_MS,                    # trailing silence after sweep/marker (ms)
 
     # Conditioning
     MIC_TAIL_TAPER_MS,              # post-sweep fade length on mic channel (ms)
@@ -55,7 +55,13 @@ from config_capture import (        # import all user-configured parameters from
     # Streaming
     BLOCKSIZE,                      # audio block size; None/0 lets host choose
     WASAPI_EXCLUSIVE,               # True for exclusive mode on WASAPI (Windows), else shared
+    MARKER_DUR_MS,                  # duration of the Barker marker (ms)
+    MARKER_BW_HZ,                   # simple band-limit (low/high), keep clear of DC & Nyquist
     )
+
+
+# Barker-13 marker controls. Short, broadband, comfortable headroom.
+MARKER_LEVEL_DBFS  = SWEEP_LEVEL_DBFS          # match sweep level by default
 
 # ─────────────────────────────────── Signal helpers ───────────────────────────────────
 def db_to_lin(db): return 10 ** (db / 20.0)  # convert dBFS to linear amplitude gain
@@ -87,6 +93,32 @@ def make_exp_sweep(fs, T, f1, f2, fade_ms=10.0, level_dbfs=-12.0):
     inv = (inv / (np.max(np.abs(inv)) + 1e-12)).astype(np.float32)   # normalize inverse
     return s.astype(np.float32), inv                                 # return sweep and inverse
 
+def make_barker13_marker(fs, dur_ms, bw_hz, level_dbfs):
+    chips = np.array([+1,+1,+1,+1,+1,-1,-1,+1,+1,-1,+1,-1,+1], dtype=np.float32)
+    n = max(16, int(round(dur_ms / 1000.0 * fs)))
+    # stretch chips to requested duration
+    marker = np.interp(np.linspace(0, len(chips) - 1, n), np.arange(len(chips)), chips)
+    # gentle fade to control bandwidth leakage
+    marker = hann_fade(marker.astype(np.float32), max(1.0, 0.2 * dur_ms), fs)
+    # simple cosine tapers at low/high ends of spectrum
+    Nfft = int(2 ** np.ceil(np.log2(n * 2)))
+    M = np.fft.rfft(marker, n=Nfft)
+    freqs = np.fft.rfftfreq(Nfft, 1 / fs)
+    f_lo, f_hi = bw_hz
+    mask = np.ones_like(freqs, dtype=np.float32)
+    if f_lo > 0:
+        idx = freqs < f_lo
+        ramp = 0.5 * (1 - np.cos(np.pi * np.clip(freqs[idx] / max(1e-9, f_lo), 0, 1)))
+        mask[idx] = ramp ** 2
+    if f_hi < fs / 2:
+        idx = freqs > f_hi
+        ramp = 0.5 * (1 - np.cos(np.pi * np.clip((fs / 2 - freqs[idx]) / max(1e-9, (fs / 2 - f_hi)), 0, 1)))
+        mask[idx] = ramp ** 2
+    M *= mask
+    marker_bl = np.fft.irfft(M, n=Nfft)[:n].astype(np.float32)
+    marker_bl *= db_to_lin(level_dbfs) / (np.max(np.abs(marker_bl)) + 1e-12)
+    return marker_bl
+
 def rfft_xcorr(a, b):
     n = int(2 ** np.ceil(np.log2(len(a) + len(b) - 1)))             # power-of-two FFT size
     A = np.fft.rfft(a, n=n)                                         # FFT of first signal
@@ -97,7 +129,7 @@ def rfft_xcorr(a, b):
     return lags, x[:len(lags)]                                      # return lags and correlation
 
 def matched_filter_detect(x, ref, search_start=None, search_end=None):
-    # Use the full sweep as the reference; do not reverse here.
+    # Matched filter via cross-correlation against a known reference wavelet (e.g., Barker marker).
     lags, corr = rfft_xcorr(x, ref)                                 # cross-correlate input vs ref
     if search_start is None:                                        # default search window start
         search_start = 0
@@ -176,25 +208,36 @@ def list_all_hostapis_and_devices():
 # ───────────────────────────────────── Core measurement (callback engine) ─────────────────────────────────────
 def run_measurement() -> dict:
     """Perform one sweep measurement and return a dict with arrays and metadata."""
+    # Build the *mic* excitation sweep (speaker drive)
     sweep, _inv = make_exp_sweep(FS, SWEEP_DUR_S, F1_HZ, F2_HZ, FADE_MS, SWEEP_LEVEL_DBFS)  # build sweep/inverse
+
+    # Build the *loopback* Barker marker (short, band-limited)
+    marker = make_barker13_marker(FS, MARKER_DUR_MS, MARKER_BW_HZ, MARKER_LEVEL_DBFS)
 
     pre  = int(round(PRE_SIL_MS  / 1000.0 * FS))                     # leading silence (samples)
     post = int(round(POST_SIL_MS / 1000.0 * FS))                     # trailing silence (samples)
     slen = len(sweep)                                                # sweep length (samples)
+    mlen = len(marker)                                               # marker length (samples)
 
-    # Single transmit buffer for both outputs
-    tx_signal = np.concatenate([np.zeros(pre, np.float32), sweep, np.zeros(post, np.float32)])  # playback program
-    n_frames = len(tx_signal)                                        # total frames to stream
-
-    k_tx_sweep_start = pre                                          # index where sweep starts in tx buffer
-    sweep_end_idx    = k_tx_sweep_start + slen                      # index where sweep ends in tx buffer
+    # Single transmit timeline; sweep and marker both start at 'pre'
+    tx_signal = np.concatenate([np.zeros(pre, np.float32), sweep,  np.zeros(post, np.float32)])  # playback program (speaker)
+    n_frames  = len(tx_signal)                                       # total frames to stream
+    k_tx_sweep_start  = pre                                          # index where sweep starts in tx buffer
+    k_tx_marker_start = pre                                          # place marker at same index for clean latency math
+    sweep_end_idx     = k_tx_sweep_start + slen                      # index where sweep ends in tx buffer
 
     out_ch_count = max(OUT_CH_SPKR, OUT_CH_REF) + 1                 # number of output channels to allocate
     in_ch_count  = max(IN_CH_MIC,  IN_CH_LOOP)  + 1                 # number of input  channels to allocate
 
-    out_frames = np.zeros((n_frames, out_ch_count), dtype=np.float32)  # output frame buffer
-    out_frames[:, OUT_CH_REF]  = tx_signal                           # place reference on its channel
-    out_frames[:, OUT_CH_SPKR] = tx_signal                           # place speaker drive on its channel
+    # Prepare multi-channel output frame buffer (init zeros)
+    out_frames = np.zeros((n_frames, out_ch_count), dtype=np.float32)
+    # Speaker channel plays the sweep program
+    out_frames[:, OUT_CH_SPKR] = tx_signal
+    # Reference channel plays the marker, placed at the same 'pre' start index
+    out_frames[k_tx_marker_start:k_tx_marker_start+mlen, OUT_CH_REF] = marker[:min(mlen, n_frames - k_tx_marker_start)]
+    
+    # Build the reference-channel timeline (what we actually output on OUT_CH_REF)
+    tx_ref_signal = out_frames[:, OUT_CH_REF].copy()
 
     out_api = api_name_for_device(OUT_DEV)                           # name of output host API
     in_api  = api_name_for_device(IN_DEV)                            # name of input  host API
@@ -221,8 +264,8 @@ def run_measurement() -> dict:
     native_block = 0 if (BLOCKSIZE is None or BLOCKSIZE == 0) else BLOCKSIZE  # 0 means “host default”
 
     # Capture buffers
-    rec_loop = np.zeros(n_frames, dtype=np.float32)                  # loopback capture buffer
-    rec_mic  = np.zeros(n_frames, dtype=np.float32)                  # microphone capture buffer
+    rec_loop = np.zeros(n_frames, dtype=np.float32)                  # loopback capture buffer (marker)
+    rec_mic  = np.zeros(n_frames, dtype=np.float32)                  # microphone capture buffer (sweep)
 
     # Playback/capture indices shared with callback
     idx_play = 0                                                     # playback frame cursor
@@ -260,8 +303,8 @@ def run_measurement() -> dict:
         if n_in > 0:                                                 # only if room remains
             if use_asio_in:
                 # indata[:, 0] is LOOP, indata[:, 1] is MIC
-                rec_loop[idx_rec:idx_rec+n_in] = indata[:n_in, 0]    # copy loopback to buffer
-                rec_mic[idx_rec:idx_rec+n_in]  = indata[:n_in, 1]    # copy mic to buffer
+                rec_loop[idx_rec:idx_rec+n_in] = indata[:n_in, 0]    # copy loopback (marker) to buffer
+                rec_mic[idx_rec:idx_rec+n_in]  = indata[:n_in, 1]    # copy mic (sweep) to buffer
             else:
                 if IN_CH_LOOP < indata.shape[1]:
                     rec_loop[idx_rec:idx_rec+n_in] = indata[:n_in, IN_CH_LOOP]  # pick configured loop channel
@@ -297,8 +340,9 @@ def run_measurement() -> dict:
         print("Warning: output underflow was reported by the driver.")  # notify if output xrun occurred
 
     # ───────────── Post-processing / alignment ─────────────
-    k_rec_sweep, _ = matched_filter_detect(rec_loop, sweep)          # find sweep start in loopback
-    L = k_rec_sweep - k_tx_sweep_start                               # sample delay vs transmit index
+    # Find marker start in loopback and compute latency vs. the *transmit* marker index
+    k_rec_marker, _ = matched_filter_detect(rec_loop, marker)        # find marker start in loopback
+    L = k_rec_marker - k_tx_marker_start                             # sample delay vs transmit index
 
     def advance(sig, lag):
         if lag <= 0:
@@ -307,7 +351,7 @@ def run_measurement() -> dict:
             return np.zeros(1, dtype=sig.dtype)                      # empty if lag beyond end
         return sig[lag:]                                             # otherwise drop leading samples
 
-    mic_aligned  = advance(rec_mic,  L)                              # align mic to transmit timeline
+    mic_aligned  = advance(rec_mic,  L)                              # align mic to transmit timeline (using marker latency)
     loop_aligned = advance(rec_loop, L)                              # align loopback likewise
     mic_edge_in  = fade_in_until(k_tx_sweep_start, mic_aligned, FS, pad_ms=PRE_SIL_MS)   # soft fade-in
     mic_cond     = fade_to_zero_after(sweep_end_idx, mic_edge_in, FS, pad_ms=MIC_TAIL_TAPER_MS)  # tail taper
@@ -316,13 +360,14 @@ def run_measurement() -> dict:
 
     return {
         "fs": FS,                                                    # sample rate (Hz)
-        "latency_samples": int(L),                                   # measured latency in samples
+        "latency_samples": int(L),                                   # measured latency in samples (from marker)
         "latency_seconds": float(L / FS),                            # measured latency in seconds
-        "tx_signal": tx_signal.astype(np.float32),                   # transmitted buffer
-        "rx_loop_raw": rec_loop.astype(np.float32),                  # raw loopback capture
-        "rx_mic_raw":  rec_mic.astype(np.float32),                   # raw microphone capture
-        "rx_loop_aligned": loop_aligned.astype(np.float32),          # loopback aligned to tx
-        "rx_mic_aligned":  mic_aligned.astype(np.float32),           # mic aligned to tx
+        "tx_signal": tx_signal.astype(np.float32),                   # transmitted sweep buffer (speaker drive)
+        "tx_ref_signal": tx_ref_signal.astype(np.float32),           # EXACT timeline sent to OUT_CH_REF
+        "rx_loop_raw": rec_loop.astype(np.float32),                  # raw loopback capture (marker)
+        "rx_mic_raw":  rec_mic.astype(np.float32),                   # raw microphone capture (sweep)
+        "rx_loop_aligned": loop_aligned.astype(np.float32),          # loopback aligned to tx via marker
+        "rx_mic_aligned":  mic_aligned.astype(np.float32),           # mic aligned to tx via marker
         "rx_mic_conditioned": mic_cond.astype(np.float32),           # mic after edge-in and tail taper
         "driver": {
             "hostapi_out": out_api,                                  # output API name
@@ -331,9 +376,17 @@ def run_measurement() -> dict:
             "requested_blocksize": int(BLOCKSIZE or 0),              # block size we asked for (0=auto)
         },
         "peaks_dbfs": {
-            "tx_signal": float(pk(tx_signal)),                       # peak dBFS of transmit buffer
+            "tx_signal": float(pk(tx_signal)),                       # peak dBFS of transmit sweep buffer
+            "tx_marker": float(pk(marker)),                          # peak dBFS of marker
             "rx_loop_raw": float(pk(rec_loop)),                      # peak dBFS of raw loopback
             "rx_mic_raw":  float(pk(rec_mic)),                       # peak dBFS of raw mic
+        },
+        # Handy indices for downstream processing
+        "indices": {
+            "tx_sweep_start": int(k_tx_sweep_start),
+            "tx_sweep_end":   int(sweep_end_idx),
+            "tx_marker_start":int(k_tx_marker_start),
+            "marker_len":     int(mlen),
         },
     }                                                                # caller can save/analyse as needed
 
@@ -342,29 +395,29 @@ if __name__ == "__main__":            # only when run as a script (not imported)
     list_all_hostapis_and_devices()   # print available APIs/devices/channels and exit
 
 r"""
-       ____  __  __ ___ _____ ______   __   
-      |  _ \|  \/  |_ _|_   _|  _ \ \ / /   
-      | | | | |\/| || |  | | | |_) \ V /    
-      | |_| | |  | || |  | | |  _ < | |     
+       ____  __  __ ___ _____ ______   __
+      |  _ \|  \/  |_ _|_   _|  _ \ \ / /
+      | | | | |\/| || |  | | | |_) \ V /
+      | |_| | |  | || |  | | |  _ < | |
      _|____/|_| _|_|___| |_| |_|_\_\|_|   __
     |  ___/ \  |  _ \_ _| \ | |/ _ \ \   / /
-    | |_ / _ \ | |_) | ||  \| | | | \ \ / / 
-    |  _/ ___ \|  __/| || |\  | |_| |\ V /  
-    |_|/_/   \_\_|  |___|_| \_|\___/  \_/   
-                       
-                     ███                 
-                   █████         ███     
-                 ███████         ████    
-               █████████    ██    ████   
-     ███████████████████    ████   ████  
-    ████████████████████     ███   ████  
-    ████████████████████      ██    ████ 
-    ████████████████████      ███    ████ 
-    ████████████████████      ███    ████ 
-    ████████████████████     ███    ████  
-     ███████████████████    ████   ████  
-              ██████████    ███   ████   
-                ████████    █    ████    
-                  ██████         ███     
-                     ███    
+    | |_ / _ \ | |)_ | ||  \| | | | \ \ / /
+    |  _/ ___ \|  __/| || |\  | |_| |\ V /
+    |_|/_/   \_\_|  |___|_| \_|\___/  \_/
+
+                     ███
+                   █████         ███
+                 ███████         ████
+               █████████    ██    ████
+     ███████████████████    ████   ████
+    ████████████████████     ███   ████
+    ████████████████████      ██    ████
+    ████████████████████      ███    ████
+    ████████████████████      ███    ████
+    ████████████████████     ███    ████
+     ███████████████████    ████   ████
+              ██████████    ███   ████
+                ████████    █    ████
+                  ██████         ███
+                     ███
 """

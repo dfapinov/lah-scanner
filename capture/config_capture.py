@@ -51,7 +51,7 @@ PRINT_SUMMARY = True  # Whether to print counts and θ-bin info after writing th
 COORD_FILE = "scan_path.csv" # Input CSV file name (same directory as script)
 OUTDIR = "demo_outputs" # output directory (relative to script)
 MAX_POINTS = 5 # Maximum number of points to capture in demo mode
-SAVE_MIC_LOOP_SIG = False # True = keep signal, loopback and raw mic sweep files. False = keep only IR.
+DEBUG_SAVES = True # True = keep all signal recordings - excitations signals, loopback and mic raw, time aligned and conditioned files. False = keep only IR.
 
 # ─────────── sweep_function.py settings: 
 
@@ -63,8 +63,8 @@ SAVE_MIC_LOOP_SIG = False # True = keep signal, loopback and raw mic sweep files
  
 # Device setup:
 
-IN_DEV  = 20         # Input device index  (mic + loopback capture)
-OUT_DEV = 20         # Output device index (speaker + loopback reference)
+IN_DEV  = 19         # Input device index  (mic + loopback capture)
+OUT_DEV = 19         # Output device index (speaker + loopback reference)
 
 # Channel numbers (0-based within each device)
 IN_CH_MIC   = 0      # Microphone input channel
@@ -77,8 +77,12 @@ FS               = 96_000     # Sampling rate (Hz)
 SWEEP_DUR_S      = 6.0        # Duration of exponential sine sweep (seconds)
 F1_HZ            = 10.0       # Start frequency (Hz)
 F2_HZ            = None       # End frequency (None → 0.48 × FS)
-SWEEP_LEVEL_DBFS = -6.0      # Playback level (dBFS) adjust to avoid clipping at the DAC.
+SWEEP_LEVEL_DBFS = -6.0       # Playback level (dBFS) adjust to avoid clipping at the DAC.
 FADE_MS          = 15.0       # Fade-in/out at sweep ends (ms)
+
+# Loopback marker parameters:
+MARKER_DUR_MS      = 100.0             # duration of the Barker marker (ms) used for system latency removal
+MARKER_BW_HZ       = (500.0, 10000.0)  # simple band-limit (low/high), keep clear of DC & Nyquist
 
 # Timing:
 PRE_SIL_MS  = 100.0           # Silence before sweep (ms)
@@ -96,6 +100,7 @@ WASAPI_EXCLUSIVE = True       # True = WASAPI Exclusive mode, False = Shared
 # Basic settings for IR generation from the recorded sweeps:
 GATE_FREQ_HZ = 5.0        # Gate length to trim IR, set as 4*cycles at desired frequency extension. (e.g. 10 Hz → 4 cycles = 800 ms)
 FADE_RATIO   = 0.12        # Fraction of gate length used for the half-Hanning fade-out
+ENABLE_GATE = True  # True = apply half-Hanning gate; False = write full, ungated IR
 
 # Advanced settings:
 ENABLE_REGULARIZATION = True

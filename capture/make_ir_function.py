@@ -6,8 +6,12 @@ Impulse Response Builder – Regularized Sweep Deconvolution
 
 Description:
 ============
-This script reconstructs an impulse response (IR) by processing two synchronized logarithmic
-sweep recordings: a reference (loopback) signal and an acoustic (microphone) capture.
+This script reconstructs an impulse response (IR) by processing a recorded
+microphone sweep using the original digital excitation signal for deconvolution,
+in accordance with the Farina method for harmonic distortion analysis.
+This approach ensures that only the true linear system response is recovered,
+while harmonic and intermodulation distortion components appear at predictable
+time offsets in the resulting IR.
 
 Usage:
 ======
@@ -17,36 +21,39 @@ Configured via:  config_capture.py
 Run directly from a terminal:
     python make_ir_function.py
 
-→ For each valid loop/mic pair in OUTDIR,
-   outputs a gated impulse response "<base>_ir.wav".
+→ Searches for "excitation_signal.wav" and all matching
+  "<base>_mic_conditioned.wav" files in OUTDIR.
+  For each valid measurement pair, the script outputs a
+  gated impulse response "<base>_ir.wav".
+
+----
 
 Import and call the processing function directly:
 
     from make_ir_function import make_ir_from_pair
-    h = make_ir_from_pair(loop_path, mic_path)
+    h = make_ir_from_pair(mic_path, excitation_path)
 
-This returns the computed IR as a NumPy float32 array (TOF preserved, gated, not written).
+This returns the computed IR as a NumPy float32 array (TOF preserved, gated).
 
 Code Pipeline Overview
 ----------------------
 Scans OUTDIR for matched sweep recordings:
-  "*_loop_aligned.wav"  – excitation reference
   "*_mic_conditioned.wav" – microphone response
+  "excitation_signal.wav" – original excitation sweep used for deconvolution
 
 For each pair, the script:
   1. Crops the sweep window.
   2. Performs regularized frequency-domain deconvolution
-     (Kirkeby-style epsilon).
+     (Kirkeby-style epsilon) using the *digital excitation* as reference.
   3. Optionally applies LF/HF tapers, preserves time-of-flight,
      and gates the tail with a half-Hanning fade
      (duration = 4 / GATE_FREQ_HZ seconds).
   4. Writes "<base>_ir.wav" – the measured system impulse response.
   
 The resulting impulse response represents the system transfer function
-from the excitation signal (loop) to the measured response (mic).
-
+from the digital excitation to the measured acoustic response,
+consistent with Farina’s swept-sine analysis framework.
 """
-
 
 
 import re  # Regular expressions used to match and strip suffixes from filenames
@@ -76,6 +83,12 @@ PLOT,  # If True, show diagnostic plots
 FADE_RATIO,  # Portion of gate window used for the half-Hanning fade
 GATE_FREQ_HZ  # Gate duration is set to 3 cycles at this frequency → 3 / GATE_FREQ_HZ seconds
 )
+
+# --- Optional toggle to disable gating entirely (default True if missing in config_capture) ---
+try:
+    from config_capture import ENABLE_GATE  # True = apply half-Hanning gate; False = leave IR un-gated
+except Exception:
+    ENABLE_GATE = True  # Backward-compatible default
 
 OUTDIR = Path(r"E:\Spkr_Scanner\Good Code\Capture\demo_outputs")  # Root directory containing input WAVs and where outputs are written
 
@@ -247,7 +260,7 @@ def apply_gate(data: np.ndarray, fs: int, gate_dur_s: float, fade_ratio: float) 
 # ─────────────────────────────────────────────────────────────────────────────
 # Importable function (returns array, does not write)
 # ─────────────────────────────────────────────────────────────────────────────
-def make_ir_from_pair(loop_path: Path, mic_path: Path) -> np.ndarray:  # Core routine to build a single IR from a loop/mic pair
+def make_ir_from_pair(mic_path: Path, excitation_path: Path) -> np.ndarray:  # Core routine to build a single IR from a loop/mic pair
     """
     Compute the final impulse response (preserving TOF, cropped to the sweep,
     regularized deconvolution, optional HF/LF tapers, gated tail) from one
@@ -265,7 +278,7 @@ def make_ir_from_pair(loop_path: Path, mic_path: Path) -> np.ndarray:  # Core ro
     np.ndarray (float32)
         Final gated IR (TOF preserved) at FS.
     """  # Detailed docstring for import usage
-    x_full, fs1 = _load_mono(loop_path)  # Load loop (excitation) WAV and sample rate
+    x_full, fs1 = _load_mono(excitation_path)  # Load excitation WAV and sample rate
     y_full, fs2 = _load_mono(mic_path)  # Load mic (response) WAV and sample rate
     if fs1 != FS or fs2 != FS:  # Sanity check: must match configured sample rate
         raise ValueError(f"SR mismatch ({fs1}/{fs2} vs {FS})")  # Fail fast if mismatched
@@ -290,55 +303,62 @@ def make_ir_from_pair(loop_path: Path, mic_path: Path) -> np.ndarray:  # Core ro
     # --- PRESERVE ABSOLUTE TIMING ---
     h = np.concatenate([np.zeros(pre, dtype=np.float32), h_core], dtype=np.float32)  # Prepend pre-roll zeros to keep TOF
 
-    # --- Apply half-Hanning gate from IR peak, then trim to gate end ---
-    gate_dur_s = 4.0 / float(GATE_FREQ_HZ)  # Gate length in seconds = four cycles at GATE_FREQ_HZ
-    h_gated, end_idx = apply_gate(h, FS, gate_dur_s, FADE_RATIO)  # Gate the IR tail
-    h = h_gated[:end_idx].astype(np.float32, copy=False)  # Trim trailing zeros beyond gate end
+    # --- Optionally apply half-Hanning gate from IR peak, then trim to gate end ---
+    #     If ENABLE_GATE is False, skip gating entirely and keep full IR.
+    if ENABLE_GATE:
+        gate_dur_s = 4.0 / float(GATE_FREQ_HZ)  # Gate length in seconds = four cycles at GATE_FREQ_HZ
+        h_gated, end_idx = apply_gate(h, FS, gate_dur_s, FADE_RATIO)  # Gate the IR tail
+        h = h_gated[:end_idx].astype(np.float32, copy=False)  # Trim trailing zeros beyond gate end
+        gated_state = "gated"
+    else:
+        h = h.astype(np.float32, copy=False)
+        gated_state = "ungated"
 
     if PLOT:  # Optional visualization of final IR
         plt.figure()  # New figure
         t = np.arange(len(h)) / FS  # Time axis in seconds
         plt.plot(t, h)  # Plot IR vs time
-        plt.title("Final IR (gated)")  # Title
+        plt.title(f"Final IR ({gated_state})")  # Title
         plt.xlabel("Time (s)")  # Label
         plt.grid(True)  # Grid
 
     return h  # Return the final IR as float32
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Original CLI flow (unchanged behavior)
+# Original CLI flow (updated to use shared excitation signal)
 # ─────────────────────────────────────────────────────────────────────────────
 def main():  # Entry point for command-line usage
     print(f"Looking for WAVs in: {OUTDIR.resolve()}")  # Inform user which directory is being scanned
-    loop_files = sorted(OUTDIR.glob("*_loop_aligned.wav"))  # Find all loop-aligned files
-    bases = []  # Accumulate base names that have matching mic files
-    for loop in loop_files:  # Iterate over candidate loop files
-        base = re.sub(r"_loop_aligned\.wav$", "", loop.name)  # Strip suffix to find base
-        if (OUTDIR / f"{base}_mic_conditioned.wav").exists():  # Check for matching mic file
-            bases.append(base)  # Keep this base if both files exist
 
-    if not bases:  # If no valid pairs found…
-        print("No matching loop/mic pairs found.")  # …inform and exit
+    # Find all microphone files
+    mic_files = sorted(OUTDIR.glob("*_mic_conditioned.wav"))  # Collect mic-conditioned files
+    bases = [re.sub(r"_mic_conditioned\.wav$", "", mic.name) for mic in mic_files]  # Strip suffix to get base names
+
+    if not bases:  # If no mic files found…
+        print("No mic-conditioned files found.")  # …inform and exit
         return  # Nothing to process
 
-    for base in bases:  # Process each matched pair
-        loop_path = OUTDIR / f"{base}_loop_aligned.wav"  # Full path to loop file
-        mic_path  = OUTDIR / f"{base}_mic_conditioned.wav"  # Full path to mic file
-        ir_path   = OUTDIR / f"{base}_ir.wav"  # Output path for IR file
+    # Shared excitation file saved once per run by the capture script
+    excitation_path = OUTDIR / "excitation_signal.wav"  # Global excitation reference
+
+    for base in bases:  # Process each mic file with the shared excitation
+        mic_path = OUTDIR / f"{base}_mic_conditioned.wav"  # Full path to mic file
+        ir_path  = OUTDIR / f"{base}_ir.wav"               # Output path for IR file
 
         try:
-            h = make_ir_from_pair(loop_path, mic_path)  # Build the IR (core processing)
-        except Exception as e:  # Catch errors to continue with other pairs
+            h = make_ir_from_pair(mic_path, excitation_path)  # Build the IR (core processing)
+        except Exception as e:  # Catch errors to continue with other bases
             print(f"[{base}] ERROR: {e}")  # Report the problem
             continue  # Move on to the next base
 
         sf.write(str(ir_path), h.astype(np.float32), FS, format="WAV", subtype="FLOAT")  # Write 32-bit float WAV
-        print(f"[{base}] → wrote {ir_path.name} (len={len(h)} @ {FS} Hz, peak={_peak(h):.4g})")  # Quick summary line
+        print(f"[{base}] → wrote {ir_path.name} ({'UNGATED' if not ENABLE_GATE else 'gated'}, len={len(h)} @ {FS} Hz, peak={_peak(h):.4g})")  # Quick summary line
 
     if PLOT:  # If plotting is enabled…
         plt.show()  # …display all figures at the end
 
     print("Done.")  # Final message
+
 
 if __name__ == "__main__":  # Only run main() when executed as a script (not when imported)
     main()  # Call the CLI entry point
@@ -353,7 +373,7 @@ r"""
     | |_ / _ \ | |_) | ||  \| | | | \ \ / / 
     |  _/ ___ \|  __/| || |\  | |_| |\ V /  
     |_|/_/   \_\_|  |___|_| \_|\___/  \_/   
-                       
+
                      ███                 
                    █████         ███     
                  ███████         ████    
