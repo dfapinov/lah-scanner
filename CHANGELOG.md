@@ -30,8 +30,9 @@ as most modern audio interfaces exhibit flat frequency response.
 
 ---
 
-## [1.0.0] – 2025-10-XX
+## [1.0.0] – 2025-10-29
 ### Added
 - Initial stable release of the capture and SHE processing pipeline.
 
 ---
+
