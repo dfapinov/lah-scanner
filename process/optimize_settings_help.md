@@ -30,6 +30,8 @@ $$C = \frac{\text{Data}}{\text{Singular Values}}$$
 
 By applying a **damping factor ($\lambda$)** on the denominator, these massive, non-physical coefficients are heavily penalized and limited, while the smaller, stable coefficients of the true physical field are left largely unaffected. The end result is the successful damping of ill-conditioning.
 
+$$C = \frac{\text{Data}}{\text{Singular Values} + \lambda}$$
+
 ---
 
 ### Thresholding and Sweeps
