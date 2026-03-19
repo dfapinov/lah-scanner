@@ -7,7 +7,7 @@ The key to finding the optimal order $N$ lies in the fact that the highest frequ
 * **High Spatial Detail:** The highest frequencies hold the greatest potential for high spatial angular detail because the wavelengths are short. Capturing this detail requires the highest possible order $N$ for an accurate fit.
 * **Anechoic Field:** Because the field is anechoic, when fit correctly, the internal source (DUT) energy should be high, while the external source (the room) energy should be minimal.
 
-If the chosen order $N$ is stable and well-conditioned, the internal-to-external field energy should have a large ratio, such as **20 dB or greater**. However, if the order $N$ is too high for the provided dataset, the matrix becomes ill-conditioned, meaning it begins fitting noise or spatial aliasing artifacts of limited measurement grid resolution.
+If the chosen order $N$ is stable and well-conditioned, the internal-to-external field energy should have a large ratio, such as **20 dB or greater**. However, if the order $N$ is too high for the provided dataset, the matrix becomes ill-conditioned, meaning it begins fitting noise or spatial aliasing artifacts of the limited measurement grid resolution.
 
 This manifests as the solver no longer knowing if energy should be placed in the internal or external field coefficients, causing the ratio of internal to external energy to drop. This usually happens in a sudden way (a **"tipping point"** in the curve), which helps us detect the highest order $N$ that returns maximum spatial detail while remaining stable and well-conditioned.
 
