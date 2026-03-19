@@ -22,6 +22,9 @@ The complexity of these shapes (the number of different bricks) is defined by th
 * **N=1 (Dipole):** A figure-eight shape, with sound pushing forward and pulling backward.
 * **N>=2 (Quadrupole and beyond):** Increasingly complex shapes with multiple "lobes" and "dents" that describe tight, angular details in the sound field.
 
+### Degrees of Freedom
+The Lego brick analogy extends to the degrees of freedom (DOF) of each harmonic degree. A simple order is like a square brick, in that it is the same at every rotation. A complex brick like an L-piece has more DOF—it is different when rotated, flipped, or mirrored. Higher harmonic degrees also have more DOFs, so the complexity they can describe scales quickly.
+
 In this respect, **Order N represents our spatial resolution.** Higher orders allow us to model finer, sharper details in the sound field's directivity.
 
 ---
