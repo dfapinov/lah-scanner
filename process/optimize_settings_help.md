@@ -1,7 +1,7 @@
 ### The Purpose
 The purpose of this script is purely to find the **optimal solver settings** in terms of the maximum expansion order ($N$), regularization thresholds (dB), and the damping factor ($\lambda$).
 
-### Finding the Optimal Order (N)
+### Finding the Optimal Order ($N$)
 The key to finding the optimal order $N$ lies in the fact that the highest frequency range analyzed is within the **RFT (Reflection Free Time)**, where the sound field is intrinsically anechoic.
 
 * **High Spatial Detail:** The highest frequencies hold the greatest potential for high spatial angular detail because the wavelengths are short. Capturing this detail requires the highest possible order $N$ for an accurate fit.
@@ -19,7 +19,7 @@ The order $N$ increases in discrete steps. While order 6 might be totally stable
 Regularization—particularly the **thresholded regularization** employed here—helps stabilize this conditioning by applying stronger damping to large, unstable coefficients than to small, stable ones. To understand why this works, we have to look at how **Spherical Harmonics (SH)** fit data:
 
 1.  A smooth, coherent acoustic field is easily described by physically reasonable, stable coefficients.
-2.  Conversely, when the solver attempts to fit tiny, incoherent spatial patterns (like chaotic noise or aliasing), it is forced to assign massive, non-physical values to high-order coefficients. 
+2.  Conversely, when the solver attempts to fit tiny, incoherent spatial patterns (like chaotic noise or aliasing), it is forced to assign massive, non-physical values to high-order coefficients.
 3.  It does this so that these complex shapes destructively interfere, canceling each other out at the measurement points to match the tiny noise anomalies.
 
 It is key to understand that while the total field fit might actually be improved by this destructive interference, the coefficients describing the internal and external fields are artificially large. When sound field separation is applied—isolating the internal and external fields—these coefficients no longer cancel each other out. As a result, we see **massive SPL (Sound Pressure Level) values** in both fields that are not based on any physical reality.
@@ -33,6 +33,6 @@ The difficulty lies in applying this damping without throwing away desired infor
 
 If this damping is applied too high up and affects the desirable clean signals, the internal-to-external energy ratio drops (which is undesirable). However, as the script sweeps the threshold lower, it identifies the exact point where the damping no longer interferes with those strong signals. Naturally, everything below this threshold is the noise responsible for ill-conditioning.
 
-The final step is to test for the ideal strength of the damping ($\lambda$) to apply only below that threshold. Finding this combination is the **sweet spot**: it allows us to extract a little extra spatial detail while safely avoiding ill-conditioning. 
+The final step is to test for the ideal strength of the damping ($\lambda$) to apply only below that threshold. Finding this combination is the **sweet spot**: it allows us to extract a little extra spatial detail while safely avoiding ill-conditioning.
 
 Ultimately, the effect of this regularization is to soften the onset of instability as the order $N$ increases. It is not strictly required for a solve, but it acts as a safety net to make the pipeline more robust.
