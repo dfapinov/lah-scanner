@@ -67,12 +67,12 @@ Above this Frequency Floor, the fixed RFT window is actually longer than necessa
 ### Why "Standard" Smoothing Fails
 Typical smoothing in acoustic software is magnitude-only. The software simply averages the peaks and dips of the SPL curve. While this makes a graph look pretty and easier to read, it is intended for visual purposes only.
 
-You cannot use magnitude-only smoothing for crossover design or signal processing. This is because magnitude and phase are inextricably linked (in what engineers call a "Minimum Phase" relationship). When the magnitude changes, the phase must change accordingly. If you smooth the magnitude but leave the phase raw (or smooth it independently), that crucial relationship is broken, and your simulations will be inaccurate.
+You cannot use magnitude-only smoothing for crossover design calculations or signal processing. This is because magnitude and phase are inextricably linked (in what engineers call a "Minimum Phase" relationship). When the magnitude changes, the phase must change accordingly. If you smooth the magnitude but leave the phase raw (or smooth it independently), that crucial relationship is broken, and your simulations will be inaccurate.
 
 ### The Solution: Complex Frequency Domain Smoothing
 To keep the measurement representing physical reality, we must use Complex Frequency Domain Smoothing.
 
-Think of the Complex Domain as a way to describe the full signal where phase and magnitude are joined at the hip. In technical terms, this data is represented by Real and Imaginary parts. (I created a fun interactive script to help understand complex frequency domain <git link here>)
+Think of the Complex Domain as a way to describe the full signal where phase and magnitude are joined at the hip. In technical terms, this data is represented by Real and Imaginary parts. (I created a fun interactive script to help understand complex frequency domain [Complex Visualizer](https://github.com/dfapinov/lah-scanner/blob/66cfdf15742e616362d79e6079e99741fabb2889/process/complex_visualizer.py))
 
 By applying smoothing to the Real and Imaginary parts simultaneously, we smooth the overall response while maintaining the physical relationship between magnitude and phase. 
 
