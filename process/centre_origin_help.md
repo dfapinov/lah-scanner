@@ -81,7 +81,7 @@ Once the search is locked onto the tweeter at high frequencies, the script uses 
 1.  **HF Search:** Locks onto the stable acoustic origin where wavelengths are smallest and most sensitive.
 2.  **The History Seed:** The script uses the origin from the last frequency to seed the next.
 3.  **Tracking the Path:** As the frequency drops and the origin shifts, the Simplex follows the path smoothly.
-4.  **Parallel Speed-up:** Since the result of one frequency serves as the starting point for the next, the process is inherently sequential. However, low frequencies are easier to resolve due to their large wavelengths. By initiating a "low-to-high" search and a "high-to-low" search simultaneously, the results converge at a midpoint frequency. This approach effectively doubles the processing speed.
+4.  **Parallel Speed-up:** Since the result of one frequency serves as the starting point for the next, the process is inherently sequential, which typically precludes multi-core CPU parallelization. However, low frequencies are easier to resolve due to their large wavelengths. By initiating a "low-to-high" search and a "high-to-low" search simultaneously, the results converge at a midpoint frequency (hopefully in agreement). This approach effectively doubles the processing speed.
 
 ### When to use the Grid Scan?
 The brute force grid scan is best reserved as a last resort for erroneous results or as a diagnostic tool. If the High-Frequency and Low-Frequency search branches fail to "meet in the middle" or provide results that do not seem to match the reality of the DUT, running a grid scan on the problematic frequencies can help determine if the simplex is getting stuck in a local valley.
