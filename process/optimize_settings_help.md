@@ -22,22 +22,22 @@ Regularization—particularly the **thresholded regularization** employed here�
 2.  Conversely, when the solver attempts to fit tiny, incoherent spatial patterns (like chaotic noise or aliasing), it is forced to assign massive, non-physical values to high-order coefficients.
 3.  It does this so that these complex shapes destructively interfere, canceling each other out at the measurement points to match the tiny noise anomalies.
 
-It is key to understand that while the total field fit might actually be improved by this destructive interference, the coefficients describing the internal and external fields are artificially large. When sound field separation is applied—isolating the internal and external fields—these coefficients no longer cancel each other out. As a result, we see **massive SPL values** in both fields that are not based on any physical reality.
+It is key to understand that while the total field fit might actually be improved by this destructive interference, the coefficients describing the internal and external fields are artificially large. When sound field separation is applied - isolating the internal and external fields - these coefficients no longer cancel each other out. As a result, we see **massive SPL values** in both fields that are not based on any physical reality.
 
 When solving coefficients, the math often involves an inversion that looks like this:
 
 $$C = \frac{\text{Data}}{\text{Singular Values}}$$
 
-By applying a **damping factor ($\lambda$)** on the denominator, these massive, non-physical coefficients are heavily penalized and limited, while the smaller, stable coefficients of the true physical field are left largely unaffected. The end result is the successful damping of ill-conditioning.
+By applying a **damping factor ($\lambda$)** on the denominator, these massive, non-physical coefficients are heavily penalized and limited, while the smaller, stable coefficients of the true physical field are less unaffected. The end result is the successful damping of ill-conditioning.
 
 $$C = \frac{\text{Data}}{\text{Singular Values} + \lambda}$$
 
 ---
 
 ### Thresholding and Sweeps
-The difficulty lies in applying this damping without throwing away desired information. This is where the **dB thresholds** come in. To find the optimal threshold, the script initially applies strong damping so that its effects are obvious.
+The difficulty lies in applying optimal damping for the large coefficants, without smoothing away desired information. This is where the **dB thresholds** come in. To find the optimal threshold, the script initially applies strong damping so that its effects are obvious.
 
-If this damping is applied too high up and affects the desirable clean signals, the internal-to-external energy ratio drops (which is undesirable). However, as the script sweeps the threshold lower, it identifies the exact point where the damping no longer interferes with those strong signals. Naturally, everything below this threshold is the noise responsible for ill-conditioning.
+If this damping is applied too at a high dB threshold (e.g., -6dB) and affects the desirable clean signals, the internal-to-external energy ratio drops (which is undesirable). However, as the script sweeps the threshold lower, it identifies the exact point where the damping no longer interferes with those strong signals. Naturally, everything below this threshold is the noise responsible for ill-conditioning.
 
 The final step is to test for the ideal strength of the damping ($\lambda$) to apply only below that threshold. Finding this combination is the **sweet spot**: it allows us to extract a little extra spatial detail while safely avoiding ill-conditioning.
 
