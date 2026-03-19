@@ -15,18 +15,18 @@ $$T(f) = \frac{m}{f}$$
 ### The FDW Approach
 Most acoustic analysis benefits from constant octave resolution (e.g., 1/6th octave) across the entire spectrum. Instead of using a fixed time window that provides inconsistent resolution, FDW varies the window length based on the frequency being measured.
 
-By keeping the number of cycles ($m$) constant, the window automatically shrinks at high frequencies to stay "tight" and expands at low frequencies to capture enough data. This allows us to exclude as many reflections as possible while maintaining a consistent, musical resolution across the entire sweep.
+By keeping the number of cycles ($m$) constant, the window automatically shrinks at high frequencies to stay tight and expands at low frequencies to capture enough wave cycles. This allows us to exclude as many reflections as possible while maintaining a consistent resolution across the entire sweep.
 
 ---
 
 ## Practicality
 
-In a perfect mathematical world, we would calculate a unique window length for every single frequency bin in the FFT. However, this "brute-force" method is not only CPU intensive, but it also introduces phase discontinuities. If each frequency is treated in total isolation, the transitions between them can become "choppy," ruining the phase data we rely on.
+In a perfect mathematical world, we would calculate a unique window length for every single frequency bin in the FFT. However, this brute-force method is not only CPU intensive, but it also introduces phase discontinuities. If each frequency is treated in total isolation, the transitions between them can become "choppy," ruining the phase data we rely on.
 
 ### The Solution: Multi-Window Interpolation
 To solve this, the practical approach uses a series of overlapping windows rather than an infinite number of unique ones.
 
-* **A Bank of Windows:** The software generates a large number of windows (from long to short).
+* **A Bank of Windows:** The software generates a number of windows (e.g., 3 per octave, from long to short).
 * **Complex Data Processing:** It calculates the complex data (both the Real and Imaginary parts, which represent Magnitude and Phase) for these windows.
 * **Interpolation:** The software then interpolates across these windows.
 
@@ -38,18 +38,20 @@ This produces a smoothly varying mix, where the transition from one window lengt
 
 The **Reflection-Free Time (RFT)** is the window of "clean" data available in your specific physical setup. It is the time gap between the direct sound arriving at the microphone and the very first reflection (usually from the floor or a nearby wall) hitting the capsule.
 
-Since this period is intrinsically reflection-free, it defines our starting window length. Because this window is fixed in time, the number of wave cycles it contains changes with frequency. To maintain your target octave resolution, there is a **"Frequency Floor"**—the point below which a fixed RFT window simply doesn't have enough cycles to give you the detail you want.
+Since this period is intrinsically reflection-free, it defines our starting window length. Because this window is fixed in time, the number of wave cycles it contains changes with frequency. To maintain a target octave resolution, there is a **"Frequency Floor"**—the point below which a fixed RFT window simply doesn't have enough cycles to give you the detail you want.
 
 To determine the Reflection-Free Time (RFT), you need to calculate the difference between the direct sound path and the shortest reflected path (usually the floor). If your speaker and microphone are at the same height ($h$) and separated by a distance ($d$), the reflected sound travels a longer, triangular path. By calculating this distance difference and dividing it by the speed of sound ($c \approx 343\text{ m/s}$), you find the "time window" available before the first reflection corrupts your measurement.
 
 ### The RFT Formula
-To calculate the RFT in milliseconds:
 
-`RFT (ms) = ([sqrt(D^2 + 4 * D_r^2) - D] / 343) * 1000`
+To calculate the **Reflection-Free Time (RFT)** in milliseconds:
 
-* **D** = Distance in meters between the speaker (DUT) and the microphone
-* **D_r** = Distance in meters from the speaker/mic to the reflecting boundary
-* 343 = Speed of sound in m/s (approximate for room temperature)
+$$\text{RFT (ms)} = \left( \frac{\sqrt{D^2 + 4D_r^2} - D}{343} \right) \times 1000$$
+
+**Where:**
+* **$D$** = Distance in meters between the speaker (DUT) and the microphone.
+* **$D_r$** = Distance in meters from the speaker/mic to the reflecting boundary.
+* **$343$** = Speed of sound in m/s (approximate for room temperature).
 
 ### Examples:
 1) 5ms RFT, 1/3 target Oct Res = 4 cycles needed = 760Hz frequency floor.
