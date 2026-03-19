@@ -1,0 +1,87 @@
+# Understanding Acoustic Origins: Aligning Math with Physical Reality
+
+In **Spherical Harmonic Expansion (SHE)**, modelling a sound field in 3D space relies on a fundamental assumption: the mathematical centre of the coordinate system needs to match the actual source of the sound.
+
+However, a loudspeaker's acoustic origin is not static; it shifts depending on the frequency being played. 
+* At **10 kHz**, the sound originates from the tweeter. 
+* At **100 Hz**, it originates from the woofer or a bass reflex port.
+
+If we don't dynamically track and align our math with this moving acoustic origin, our calculations become unnecessarily complex, mathematically unstable, and highly susceptible to noise. This is called **“ill-conditioning”**.
+
+---
+
+## Spherical Harmonics and Order N
+
+To understand why the origin matters, we first need to understand how Spherical Harmonic Expansion works. You may know of Fourier, who proved that a complex audio signal can be described as a sum of its component parts—simple sine waves. 
+
+Spherical Harmonics can be thought of as a 3D version of a Fourier transform, breaking a complex 3D shape (the sound field) into a series of standardized 3D shapes (spherical harmonics, or the ‘harmonic basis’). It is like using various standardized Lego bricks to build up the complex shape of a Batman figure.
+
+The complexity of these shapes (the number of different bricks) is defined by the **Harmonic Degree, or Order (N)**:
+
+* **N=0 (Monopole):** A perfectly uniform, pulsating sphere. This is the simplest possible sound source.
+* **N=1 (Dipole):** A figure-eight shape, with sound pushing forward and pulling backward.
+* **N>=2 (Quadrupole and beyond):** Increasingly complex shapes with multiple "lobes" and "dents" that describe tight, angular details in the sound field.
+
+In this respect, **Order N represents our spatial resolution.** Higher orders allow us to model finer, sharper details in the sound field's directivity.
+
+---
+
+## The Origin Problem: The "Explosion" of Complexity
+
+Imagine a perfectly spherical, pulsating balloon (an N=0 monopole). If we place the center of this balloon exactly at the center of our mathematical universe (0,0,0), the math is incredibly simple. The SHE solver only needs a single coefficient (a single radius) at N=0 to perfectly describe its surface.
+
+Now, imagine we move that same balloon 1 meter to the left, but we keep our mathematical origin at (0,0,0). 
+
+From the perspective of our mathematical origin, the balloon no longer looks like a simple, single radius. To describe this shifted balloon using math anchored at (0,0,0), the solver has to account for the near surface, the far surface, and everything in between. It is forced to use a massive combination of N=1, N=2, N=3, and so on, stacking complex "lobes" and "dents" on top of each other just to describe a simple balloon from a distant perspective.
+
+### The Consequences of Mismatched Origins
+When the acoustic origin is far from the mathematical origin, the required Order N explodes. This causes two massive problems for separating the internal speaker source from external room reflections:
+
+1.  **Noise Amplification:** Higher-order spherical harmonics are incredibly sensitive to tiny variations. If the solver is forced to use high orders just to map an off-center source, it will amplify background noise or slight measurement errors in the microphone positioning and data.
+2.  **Numerical Instability (Singularities):** The math required to calculate high-order wave propagation becomes fundamentally unstable. The matrices we use to solve the sound field lose their simplicity and become overly dependent on each other (a form of ill-conditioning called "linear dependence"), leading to mathematical singularities where the simulation falls apart.
+
+---
+
+## The "Phantom" Origin and Phase Shifts
+
+To further understand why a dynamic 3D origin search is necessary, it helps to look at how different sound sources on a loudspeaker interact. The acoustic origin isn't always a physical component you can touch; it is often a "phantom" point in space created by the summation of multiple sources or the physics of air motion.
+
+* **The Crossover Handover (The Mid-way Point):** When a loudspeaker transitions from the tweeter down to the woofer, the acoustic center doesn't simply jump from one to the other. Through the crossover region, where both drivers are producing the exact same frequencies at similar amplitudes, the mathematical "center" of the combined sound field will resolve to a phantom mid-way point suspended between the two drivers.
+* **Rapid Shifting and Diffraction:** At the specific frequency where a bass reflex port is tuned, the port takes over as the dominant radiator, causing the origin to shift rapidly toward the opening. Furthermore, when sound waves hit the cabinet edges, those edges act as secondary radiators (diffraction). Cabinet panels may vibrate as sympathetic resonators creating further sound sources. These interfere with the direct sound, pulling the calculated acoustic origin in unexpected directions.
+
+Because of these complex interactions, it is impossible to manually pick a single coordinate that works for the whole speaker, or even one per driver.
+
+---
+
+## Optimization Strategies: The Simplex vs. The Brute Force Grid
+
+To map this shifting path and keep the required Order N as low as physically possible, the script provides two distinct methods for finding the "global minimum" error in 3D space.
+
+### 1. The 3D Simplex (The "Amoeba" Descent)
+The primary search tool is the **Nelder-Mead Simplex** algorithm.
+* **How it works:** It creates a small 3D tetrahedron (the simplex) in space and walks it through the error landscape by flipping, stretching, or shrinking the shape.
+* **Strengths:** It is incredibly fast and efficient once it is in the correct neighborhood of the goal.
+* **The Weakness:** It is a local optimizer. If it is dropped into a local valley (a false minimum), it will get stuck there and never find the true acoustic origin.
+
+### 2. The Volumetric Grid Scan (The "Brute Force" Map)
+For cases where the sound field is particularly chaotic, or simply to visualize the acoustic landscape, the script can perform a full volumetric grid scan.
+* **How it works:** It divides the 3D search area into a grid and calculates the SHE residual error at every single point (to a limited order_N, e.g., N=6).
+* **Strengths:** It provides a "true" map of the error landscape, ensuring the region of the global minimum is found regardless of where you start.
+* **The "Cost":** This method is computationally massive. While a Simplex search might require 50 solves per frequency, a full 3D landscape rendering for a single frequency might require 200,000. A single frequency full scan can take 5+ minutes. Running this across the entire spectrum could easily exceed hours of CPU time.
+
+---
+
+## Seeded Intelligence: Why Human Input is Critical
+
+Because the brute force method is too slow for everyday use, the script is designed to use human intelligence as the bridge. The optimization requires the user to provide the physical coordinates of the high-frequency driver as a starting point. This tends to have the smallest ‘acoustic origin’ footprint and is therefore most difficult to locate in a large volume of space without a hint. Dropping the Simplex close to the HF driver bypasses the need for a costly brute-force scan.
+
+### The "Chain of Custody" Sweep
+Once the search is locked onto the tweeter at high frequencies, the script uses a cascading approach to manage the 3D space:
+
+1.  **HF Search:** Locks onto the stable acoustic origin where wavelengths are smallest and most sensitive.
+2.  **The History Seed:** The script uses the origin from the last frequency to seed the next.
+3.  **Tracking the Path:** As the frequency drops and the origin shifts, the Simplex follows the path smoothly.
+4.  **Parallel Speed-up:** Since the result of one frequency serves as the starting point for the next, the process is inherently sequential. However, low frequencies are easier to resolve due to their large wavelengths. By initiating a "low-to-high" search and a "high-to-low" search simultaneously, the results converge at a midpoint frequency. This approach effectively doubles the processing speed.
+
+### When to use the Grid Scan?
+The brute force grid scan is best reserved as a last resort for erroneous results or as a diagnostic tool. If the High-Frequency and Low-Frequency search branches fail to "meet in the middle" or provide results that do not seem to match the reality of the DUT, running a grid scan on the problematic frequencies can help determine if the simplex is getting stuck in a local valley.
