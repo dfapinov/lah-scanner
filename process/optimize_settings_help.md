@@ -24,6 +24,10 @@ Regularization—particularly the **thresholded regularization** employed here�
 
 It is key to understand that while the total field fit might actually be improved by this destructive interference, the coefficients describing the internal and external fields are artificially large. When sound field separation is applied—isolating the internal and external fields—these coefficients no longer cancel each other out. As a result, we see **massive SPL (Sound Pressure Level) values** in both fields that are not based on any physical reality.
 
+When solving coefficients, the math often involves an inversion that looks like this:
+
+$$C = \frac{\text{Data}}{\text{Singular Values}}$$
+
 By applying a **damping factor ($\lambda$)** on the denominator, these massive, non-physical coefficients are heavily penalized and limited, while the smaller, stable coefficients of the true physical field are left largely unaffected. The end result is the successful damping of ill-conditioning.
 
 ---
