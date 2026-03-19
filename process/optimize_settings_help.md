@@ -1,5 +1,5 @@
-### The Purpose
-The purpose of this script is purely to find the **optimal solver settings** in terms of the maximum expansion order ($N$), regularization thresholds (dB), and the damping factor ($\lambda$).
+# Optimizing order N and Reguarlization
+The purpose of this script is to find the **optimal solver settings** in terms of the maximum expansion order ($N$), regularization thresholds (dB), and the damping factor ($\lambda$).
 
 ### Finding the Optimal Order ($N$)
 The key to finding the optimal order $N$ lies in the fact that the highest frequency range analyzed is within the **RFT (Reflection Free Time)**, where the sound field is intrinsically anechoic.
