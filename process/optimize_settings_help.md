@@ -37,8 +37,8 @@ $$C = \frac{\text{Data}}{\text{Singular Values} + \lambda}$$
 ### Thresholding and Sweeps
 The difficulty lies in applying optimal damping for the large coefficants, without smoothing away desired information. This is where the **dB thresholds** come in. To find the optimal threshold, the script initially applies strong damping so that its effects are obvious.
 
-If this damping is applied too at a high dB threshold (e.g., -6dB) and affects the desirable clean signals, the internal-to-external energy ratio drops (which is undesirable). However, as the script sweeps the threshold lower, it identifies the exact point where the damping no longer interferes with those strong signals. Naturally, everything below this threshold is the noise responsible for ill-conditioning.
+If this damping is applied at too high a dB threshold (e.g., -6dB) where it affects the desirable clean signals, the internal-to-external energy ratio drops. However, as the script sweeps the threshold lower, it identifies the exact point where the damping no longer interferes with those strong signals. Naturally, everything below this threshold is the noise responsible for ill-conditioning.
 
 The final step is to test for the ideal strength of the damping ($\lambda$) to apply only below that threshold. Finding this combination is the **sweet spot**: it allows us to extract a little extra spatial detail while safely avoiding ill-conditioning.
 
-Ultimately, the effect of this regularization is to soften the onset of instability as the order $N$ increases. It is not strictly required for a solve, but it acts as a safety net to make the pipeline more robust.
+Ultimately, the effect of this regularization is to soften the onset of instability as the order $N$ increases. It is not strictly required for a solve, but it acts as a safety net to make the pipeline more robust. If the input data set is of excellent quality, the role of regularization is reduced.
