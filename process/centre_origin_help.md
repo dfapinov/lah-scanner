@@ -16,7 +16,7 @@ To understand why the origin matters, we first need to understand how Spherical 
 
 Spherical Harmonics can be thought of as a 3D version of a Fourier transform, breaking a complex 3D shape (the sound field) into a series of standardized 3D shapes (spherical harmonics, or the ‘harmonic basis’). It is like using various standardized Lego bricks to build up the complex shape of a Batman figure.
 
-The complexity of these shapes (the number of different bricks) is defined by the **Harmonic Degree, or Order (N)**:
+The complexity of these shapes (like simple or complex bricks) is defined by the **Harmonic Degree, or Order (N)**:
 
 * **N=0 (Monopole):** A perfectly uniform, pulsating sphere. This is the simplest possible sound source.
 * **N=1 (Dipole):** A figure-eight shape, with sound pushing forward and pulling backward.
