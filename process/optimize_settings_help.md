@@ -22,7 +22,7 @@ Regularization—particularly the **thresholded regularization** employed here�
 2.  Conversely, when the solver attempts to fit tiny, incoherent spatial patterns (like chaotic noise or aliasing), it is forced to assign massive, non-physical values to high-order coefficients.
 3.  It does this so that these complex shapes destructively interfere, canceling each other out at the measurement points to match the tiny noise anomalies.
 
-It is key to understand that while the total field fit might actually be improved by this destructive interference, the coefficients describing the internal and external fields are artificially large. When sound field separation is applied—isolating the internal and external fields—these coefficients no longer cancel each other out. As a result, we see **massive SPL (Sound Pressure Level) values** in both fields that are not based on any physical reality.
+It is key to understand that while the total field fit might actually be improved by this destructive interference, the coefficients describing the internal and external fields are artificially large. When sound field separation is applied—isolating the internal and external fields—these coefficients no longer cancel each other out. As a result, we see **massive SPL values** in both fields that are not based on any physical reality.
 
 When solving coefficients, the math often involves an inversion that looks like this:
 
