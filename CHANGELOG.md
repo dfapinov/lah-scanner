@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.0] - 2026-03-20
+A compatability breaking release. All scripts have been significantly refactored with the aim of
+becoming the key post-processing pipeline a comunity project called HALS (Holographic Acoustic
+Loudspeaker Scanner). This is a beta release. Updates and documentation will follow.
+
 ---
 
 ## [1.1.0] – 2025-11-06
