@@ -88,7 +88,7 @@ Because the brute force method is too slow for everyday use, the script is desig
 #### 2. Low-to-High Search (LF-to-HF)
 * **Initial Lock:** The algorithm begins at the lowest frequencies, where large wavelengths create a broad, stable gradient that is easy to "lock on" to.
 * **The History Seed:** Similar to the HF search, each successful solve seeds the next step upward.
-* **Path Tracking:** As the frequency increases, the simplex tracks the shifting origin upward toward the crossover regions.
+* **Path Tracking:** As the frequency increases, the simplex tracks the shifting origin upward toward the crossover region and tweeter.
 
 While each individual search branch is inherently sequential, they are independent of each other. It is therefore possible to process both in parallel on their own CPU cores, adding no extra time penalty compared to a single search. 
 
