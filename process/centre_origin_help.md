@@ -78,18 +78,17 @@ For cases where the sound field is particularly chaotic, or simply to visualize 
 
 Because the brute force method is too slow for everyday use, the script is designed to use human intelligence as the bridge. The optimization requires the user to provide the physical coordinates of the high-frequency driver as a starting point. This tends to have the smallest ‘acoustic origin’ footprint and is therefore most difficult to locate in a large volume of space without a hint. Dropping the Simplex close to the HF driver bypasses the need for a costly brute-force scan.
 
-### Dual Parallel Sweeps
-The script runs two simplex searches in parallel to map the acoustic origin in 3D space:
+### Parallel Dual-Path Search
 
-#### High to Low Search
-1.  **HF Search:** Locks onto the stable acoustic origin where wavelengths are smallest and most sensitive using the users provided tweeter coordinates.
-2.  **The History Seed:** The script uses the origin from the last frequency to seed the next.
-3.  **Tracking the Path:** As the frequency drops and the origin shifts, the Simplex follows the path smoothly.
+#### 1. High-to-Low Search (HF-to-LF)
+* **Initial Lock:** The algorithm begins at the highest frequencies, using the user-provided tweeter coordinates to lock onto the origin where wavelengths are smallest and most sensitive.
+* **The History Seed:** The script uses the origin coordinates from the previous frequency to seed the next.
+* **Path Tracking:** As the frequency drops and the origin shifts, the simplex follows the acoustic path downward.
 
-#### Low to High Search
-1.  **LF Search:** Locks onto the low frequency acoustic origin easily where wavelengths are largest and the gradient to the origin is largest.
-2.  **The History Seed:** The script uses the origin from the last frequency to seed the next.
-3.  **Tracking the Path:** As the frequency increases and the origin shifts, the Simplex follows the path smoothly.
+#### 2. Low-to-High Search (LF-to-HF)
+* **Initial Lock:** The algorithm begins at the lowest frequencies, where large wavelengths create a broad, stable gradient that is easy to "lock on" to.
+* **The History Seed:** Similar to the HF search, each successful solve seeds the next step upward.
+* **Path Tracking:** As the frequency increases, the simplex tracks the shifting origin upward toward the crossover regions.
 
 While each individual search branch is inherently sequential, they are independent of each other. It is therefore possible to process both in parallel on their own CPU cores, adding no extra time penalty compared to a single search. 
 
