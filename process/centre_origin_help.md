@@ -20,7 +20,7 @@ The complexity of these shapes (like simple or complex bricks) is defined by the
 
 * **N=0 (Monopole):** A perfectly uniform, pulsating sphere. This is the simplest possible sound source.
 * **N=1 (Dipole):** A figure-eight shape, with sound pushing forward and pulling backward.
-* **N>=2 (Quadrupole and beyond):** Increasingly complex shapes with multiple "lobes" and "dents" that describe tight, angular details in the sound field.
+* **N>=2 (Quadrupole and beyond):** Increasingly complex shapes with multiple lobes that describe tight, angular details in the sound field.
 
 ### Degrees of Freedom
 The Lego brick analogy extends to the degrees of freedom (DOF) of each harmonic degree. A simple order is like a square brick, in that it is the same at every rotation. A complex brick like an L-piece has more DOF—it is different when rotated, flipped, or mirrored. Higher harmonic degrees also have more DOFs, so the complexity they can describe scales quickly.
@@ -78,13 +78,27 @@ For cases where the sound field is particularly chaotic, or simply to visualize 
 
 Because the brute force method is too slow for everyday use, the script is designed to use human intelligence as the bridge. The optimization requires the user to provide the physical coordinates of the high-frequency driver as a starting point. This tends to have the smallest ‘acoustic origin’ footprint and is therefore most difficult to locate in a large volume of space without a hint. Dropping the Simplex close to the HF driver bypasses the need for a costly brute-force scan.
 
-### The "Chain of Custody" Sweep
-Once the search is locked onto the tweeter at high frequencies, the script uses a cascading approach to manage the 3D space:
+### Dual Parallel Sweeps
+The script uses two approaches to manage the search in 3D space:
 
-1.  **HF Search:** Locks onto the stable acoustic origin where wavelengths are smallest and most sensitive.
+#### High to Low Search
+1.  **HF Search:** Locks onto the stable acoustic origin where wavelengths are smallest and most sensitive using the users provided tweeter coordinates.
 2.  **The History Seed:** The script uses the origin from the last frequency to seed the next.
 3.  **Tracking the Path:** As the frequency drops and the origin shifts, the Simplex follows the path smoothly.
-4.  **Parallel Speed-up:** Since the result of one frequency serves as the starting point for the next, the process is inherently sequential, which typically precludes multi-core CPU parallelization. However, low frequencies are easier to resolve due to their large wavelengths. By initiating a "low-to-high" search and a "high-to-low" search simultaneously, the results converge at a midpoint frequency (hopefully in agreement). This approach effectively doubles the processing speed.
+
+#### Low to High Search
+1.  **LF Search:** Locks onto the low frequency acoustic origin easily where wavelengths are largest and the gradient to the origin is largest.
+2.  **The History Seed:** The script uses the origin from the last frequency to seed the next.
+3.  **Tracking the Path:** As the frequency increases and the origin shifts, the Simplex follows the path smoothly.
+
+While each individual search branch is inherently sequential, they are independent of each other. It is therefore possible to process both in parallel on their own CPU cores, adding no extra time penalty compared to a single search. 
+
+Since each branch approaches the acoustic centre from a different starting position, they provide a "second opinion" on the origin's location. One search can occasionally find a lower error origin than the other.
+
+Once both branches complete, the script compares the results and selects the most accurate origin point from either path.
+
+These best-fit results are then interpolated across the full frequency resolution of your input data set for a seamless final output.
+
 
 ### When to use the Grid Scan?
 The brute force grid scan is best reserved as a last resort for erroneous results or as a diagnostic tool. If the High-Frequency and Low-Frequency search branches fail to "meet in the middle" or provide results that do not seem to match the reality of the DUT, running a grid scan on the problematic frequencies can help determine if the simplex is getting stuck in a local valley.
