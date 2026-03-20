@@ -5,8 +5,6 @@ This project is a Python code pipeline to run a 3D loudspeaker measurement syste
 This code is in the process of being adapted as part of a larger comunity project calls HALS.
 
 
-I provide this code with the hope that other audio hobbyists can complete the project.
-
 ---
 
 ![Project Image](images/main_cartoon_small.png)
