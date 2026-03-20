@@ -79,7 +79,7 @@ For cases where the sound field is particularly chaotic, or simply to visualize 
 Because the brute force method is too slow for everyday use, the script is designed to use human intelligence as the bridge. The optimization requires the user to provide the physical coordinates of the high-frequency driver as a starting point. This tends to have the smallest ‘acoustic origin’ footprint and is therefore most difficult to locate in a large volume of space without a hint. Dropping the Simplex close to the HF driver bypasses the need for a costly brute-force scan.
 
 ### Dual Parallel Sweeps
-The script uses two approaches to manage the search in 3D space:
+The script runs two simplex searches in parallel to map the acoustic origin in 3D space:
 
 #### High to Low Search
 1.  **HF Search:** Locks onto the stable acoustic origin where wavelengths are smallest and most sensitive using the users provided tweeter coordinates.
