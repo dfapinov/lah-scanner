@@ -30,6 +30,10 @@ The scripts presented here make this possible.
 
 ---
 
+## Beta version
+This is a beta code release. Therefore the documentation below is out of date on many aspects.
+Updates and documentation to follow.
+
 ## Code Overview
 
 Scipts are mostly self-contained and can be run directly from the command prompt.  
