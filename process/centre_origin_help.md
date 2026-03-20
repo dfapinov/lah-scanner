@@ -105,4 +105,3 @@ The brute force grid scan is best reserved as a last resort for erroneous result
 ### A Note on Reported Results
 Because the origin search is performed using a limited spatial resolution (typically Order N=6) to maintain high solve speeds, the error percentages reported during this stage may appear higher than those of the final, high-order SHE reconstruction. You should expect to see a reasonably consistent error curve that rises slightly during complex spatial transitions—such as the crossover region—and generally trends upward toward the high frequencies.
 
-A primary indicator that the algorithm is successfully tracking the true acoustic origin is when the HF-to-LF and LF-to-HF sweeps agree at their meeting point. It is a strong validation of the model's accuracy when two independent search paths, starting from opposite ends of the spectrum, arrive at the same physical coordinate.
