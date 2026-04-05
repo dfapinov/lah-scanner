@@ -7,7 +7,7 @@ This script takes the mathematical description of the 3D sound field (the `.h5` 
    * **External Source:** The room field and reflections (that which was stripped from the Internal Source). Useful for solve quality verification.
    * **Full:** Both fields combined. This effectively reconstructs the raw measurement in the room and is mostly used for debugging or verification.
 2. **Propagates the 3D sound field to any point in space for evaluation.** This is done based on wave propagation physics that describe how sound travels. The evaluation/observation coordinate could be 1m in front of the speaker or 100m above it—you can move the virtual microphone anywhere.
-3. **Extracts complex pressure data (magnitude and phase)** from the mathematical model at your chosen evaluation coordinate. This inherently includes the time of flight for the sound to reach your evaluation point, so a setting to subtract that delay is available.
+3. **Extracts complex pressure data (magnitude and phase)** from the mathematical model at your chosen evaluation coordinate. This is the raw measurment data that can be used to export FRD or Impulse Responses.
 
 The script has an automatic ‘arc sweep’ mode so the user can set a distance, angle range (e.g., +/- 90 degrees), increment (e.g., 10 degrees), and a direction (horizontal, vertical, both). 
 
