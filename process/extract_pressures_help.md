@@ -23,7 +23,7 @@ This applies a physical shift to the virtual microphone relative to the measurem
 **Spherical Orientation**
 Spherical harmonic mathematics rely on a specific coordinate system where **Theta = 0** aims "straight up" vertically (the North Pole of the sphere). However, in acoustic measurements, a loudspeaker is typically facing "forwards" toward the equator, not pointing at the ceiling.
 
-* **Zero Theta:** Setting this to 90 degrees rotates the primary measurement axis from the North Pole down to the equator, aligning the math with the front of the DUT.
+* **Zero Theta:** Setting this to 90 degrees rotates the primary measurement axis from the North Pole down to the equator, aligning measurement arcs sweeps with the front of the DUT.
 * **Zero Phi:** Functions similarly, allowing you to rotate the frame of reference horizontally around the equator.
 
 ---
