@@ -66,9 +66,10 @@ If you utilized a measurement microphone that requires correction, a calibration
 ### Complex Phase Derivation
 Standard calibration files only provide magnitude adjustments. However, this script automatically derives the minimum-phase response that directly corresponds to those magnitude adjustments. This ensures that the system corrects not just the amplitude, but the phase of your measurements as well, maintaining magnitude and phase coherence.
 
-### Fade-Out and Inversion
-* **Fade-Out:** Microphone calibration files rarely cover the entire frequency spectrum. To prevent a sudden "step" or shelf in the measurement data where the calibration file ends, the script automatically applies a fade-out to the correction above and below the limits of the provided file. The bandwidth of this fade can be user-set by `MIC_CALIBRATION_FADE_OCTAVES`.
 * **Add vs. Subtract:** Depending on the source, some files contain the raw microphone response (requiring subtraction), while others contain the inverted correction curve itself (requiring addition). You can toggle the script to "add" or "subtract" to accommodate either format.
+
+* **Fade-Out:** Microphone calibration files rarely cover the entire frequency spectrum. To prevent a sudden "step" or shelf in the measurement data where the calibration file ends, the script automatically applies a fade-out to the correction above and below the limits of the provided file. The bandwidth of this fade can be user-set by `MIC_CALIBRATION_FADE_OCTAVES`.
+
 
 ---
 
