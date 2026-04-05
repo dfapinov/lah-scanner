@@ -20,7 +20,7 @@ To ensure your virtual measurements align with the physical reality of the speak
 **Cartesian Offset (XYZ)**
 This applies a physical shift to the virtual microphone relative to the measurement origin. For example, if your physical measurement grid was centered on the midrange driver of a 3-way speaker, but you want to perform an arc sweep rotating around the tweeter's acoustic center, you can apply a Z-axis (height) offset to raise the measurement origin accordingly.
 
-**Spherical Orientation (Zero Theta and Zero Phi)**
+**Spherical Orientation**
 Spherical harmonic mathematics rely on a specific coordinate system where **Theta = 0** aims "straight up" vertically (the North Pole of the sphere). However, in acoustic measurements, a loudspeaker is typically facing "forwards" toward the equator, not pointing at the ceiling.
 
 * **Zero Theta:** Setting this to 90 degrees rotates the primary measurement axis from the North Pole down to the equator, aligning the math with the front of the DUT.
