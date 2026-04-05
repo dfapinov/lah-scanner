@@ -68,13 +68,13 @@ Standard calibration files only provide magnitude adjustments. However, this scr
 
 * **Add vs. Subtract:** Depending on the source, some files contain the raw microphone response (requiring subtraction), while others contain the inverted correction curve itself (requiring addition). You can toggle the script to "add" or "subtract" to accommodate either format.
 
-* **Fade-Out:** Microphone calibration files rarely cover the entire frequency spectrum. To prevent a sudden "step" or shelf in the measurement data where the calibration file ends, the script automatically applies a fade-out to the correction above and below the limits of the provided file. The bandwidth of this fade can be user-set by `MIC_CALIBRATION_FADE_OCTAVES`.
+* **Fade-Out:** Microphone calibration files rarely cover the entire frequency spectrum. To prevent a sudden "step" or shelf in the measurement data where the calibration file ends, the script automatically applies a fade-out to the correction above and below the limits of the provided file. The bandwidth of this fade can be user-set, but by default is 1-octave.
 
 
 ---
 
 ## Inverse Acoustic Origin Transform
-In earlier processing stages, the system dynamically shifted the mathematical coordinate system to align with the optimal acoustic origin at every individual frequency. This was necessary to solve the Spherical Harmonic Expansion (SHE) with maximum accuracy.
+In earlier processing stages, the system shifted the mathematical coordinate system to align with the optimal acoustic origin at every individual frequency. This was necessary to solve the Spherical Harmonic Expansion (SHE) with maximum accuracy.
 
 Evaluating that optimized SHE data "as is" would result in a sound field that no longer aligns with the physical reality of the Device Under Test (DUT). The script notes the exact coordinate transforms applied during the earlier solve and performs the exact opposite shift at every frequency during extraction. 
 
