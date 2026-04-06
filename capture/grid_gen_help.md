@@ -16,8 +16,6 @@ This script generates a CSV file containing the coordinates for every measuremen
 
 ## Grid Dimensions and Clearances
 
-When configuring the grid, the specified `cyl_radius` and `cyl_height` represent the internal dimensions of the cylinder.
-
 * **Internal vs. External Bounds:** When configuring the grid, the specified `cyl_radius` and `cyl_height` represent the internal dimensions of the cylinder, allowing you to size the grid precisely around the physical dimensions of the DUT. The absolute maximum external dimensions of the generated grid will be the specified height and radius plus the `wall_thickness_mm` (default 50mm). You must ensure the internal dimensions clear any cables or accessories connected to the DUT.
 * **Point Density:** The `num_points` parameter dictates the total number of measurement locations. A value between 1000 and 2000 is generally a reasonable default for standard operations.
 * **Keep-Out Zones:** The script includes parameters to define physical limits where the microphone cannot travel. The `phi_min_deg` and `phi_max_deg` parameters create an angular keep-out range, which is necessary if an endstop or mechanical limit prevents a full 360-degree rotation. Similarly, `bottom_cutoff_mm` creates a circular keep-out area at the centre of the bottom cap to avoid collisions with the DUT support pole.
