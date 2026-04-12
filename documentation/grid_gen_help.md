@@ -12,7 +12,7 @@ This script generates a CSV file containing the coordinates for every measuremen
 | **gen_settings** | A metadata column containing the exact configuration parameters used to generate this specific grid. |
 | **order_idx** | Represents the sequence in which points should be measured. This is added by the subsequent script, `path_plan.py`, to ensure efficient mechanical motion and prevent hardware collisions. |
 
-![CSV Example](C:\Users\simon\Desktop\good code 2 backup 6\documentation\docu_images\CSV Example.png)
+![CSV Example](./docu_images/CSV Example.png)
 
 
 
@@ -24,11 +24,11 @@ This script generates a CSV file containing the coordinates for every measuremen
 
 * **Point Density:** The `num_points` parameter dictates the total number of measurement locations. A value between 1000 and 2000 is generally a reasonable default for standard operations.
 
-  <img src="C:\Users\simon\Desktop\good code 2 backup 6\documentation\docu_images\200_1000_points.png" alt="200_1000_points" style="zoom:67%;" />
+  <img src="./docu_images/200_1000_points.png" alt="200_1000_points" style="zoom:67%;" />
 
 * **Keep-Out Zones:** The script includes parameters to define physical limits where the microphone cannot travel. The `phi_min_deg` and `phi_max_deg` parameters create an angular keep-out range, which is necessary if an endstop or mechanical limit prevents a full 360-degree rotation. Similarly, `bottom_cutoff_mm` creates a circular keep-out area at the centre of the bottom cap to avoid collisions with the DUT support pole.
 
-  <img src="C:\Users\simon\Desktop\good code 2 backup 6\documentation\docu_images\Grid Keep Out.png" alt="Grid Keep Out" style="zoom: 50%;" />
+  <img src="./docu_images/Grid Keep Out.png" alt="Grid Keep Out" style="zoom: 50%;" />
 
 ---
 
@@ -44,9 +44,9 @@ The grid points are initially laid out as a cylindrical surface wrapped by a Fib
 
   
 
-  <img src="C:\Users\simon\Desktop\good code 2 backup 6\documentation\docu_images\Cylinder Flat.png" alt="Cylinder Flat" style="zoom:67%;" />
+  <img src="./docu_images/Cylinder Flat.png" alt="Cylinder Flat" style="zoom:67%;" />
 
-  <img src="C:\Users\simon\Desktop\good code 2 backup 6\documentation\docu_images\Cylinder Flat Rotate.gif" alt="Cylinder Flat Rotate" style="zoom:50%;" />
+  <img src="./\docu_images\Cylinder Flat Rotate.gif" alt="Cylinder Flat Rotate" style="zoom:50%;" />
 
 ---
 
@@ -54,9 +54,9 @@ The grid points are initially laid out as a cylindrical surface wrapped by a Fib
 
 After the base cylinder is wrapped, the script assigns a "magnetic attraction" value to each point, pulling it outward to give the cylinder walls and caps a volumetric "thickness". The maximum distance of this outward expansion is defined by the `wall_thickness_mm` parameter.
 
-<img src="C:\Users\simon\Desktop\good code 2 backup 6\documentation\docu_images\Cylinder Thicknes.png" alt="Cylinder Thicknes" style="zoom:67%;" />
+<img src="./docu_images/Cylinder Thicknes.png" alt="Cylinder Thicknes" style="zoom:67%;" />
 
-<img src="C:\Users\simon\Desktop\good code 2 backup 6\documentation\docu_images\Cylinder Thick Rotate.gif" alt="Cylinder Thick Rotate" style="zoom:50%;" />
+<img src="./docu_images/Cylinder Thick Rotate.gif" alt="Cylinder Thick Rotate" style="zoom:50%;" />
 
 ### The Blind Spot Problem (Bessel Nulls)
 
