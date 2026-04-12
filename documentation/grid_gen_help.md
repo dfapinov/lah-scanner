@@ -54,7 +54,7 @@ After the base cylinder is wrapped, the script assigns a "magnetic attraction" v
 
 <img src="./docu_images/Cylinder%20Thicknes.png" alt="Cylinder Thicknes" style="zoom:67%;" />
 
-<img src="./docu_images/Cylinder%20Thick%20Rotate.gif" alt="Cylinder Thick Rotate" style="zoom:67%;" />
+![Cylinder Thick Rotate 2](./docu_images/Cylinder%20Thick%20Rotate%202.gif)
 
 ### The Blind Spot Problem (Bessel Nulls)
 
