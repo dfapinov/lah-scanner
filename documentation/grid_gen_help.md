@@ -12,7 +12,7 @@ This script generates a CSV file containing the coordinates for every measuremen
 | **gen_settings** | A metadata column containing the exact configuration parameters used to generate this specific grid. |
 | **order_idx** | Represents the sequence in which points should be measured. This is added by the subsequent script, `path_plan.py`, to ensure efficient mechanical motion and prevent hardware collisions. |
 
-![CSV Example](./docu_images/CSV Example.png)
+![CSV Example](./docu_images/CSV%20Example.png)
 
 
 
@@ -28,7 +28,7 @@ This script generates a CSV file containing the coordinates for every measuremen
 
 * **Keep-Out Zones:** The script includes parameters to define physical limits where the microphone cannot travel. The `phi_min_deg` and `phi_max_deg` parameters create an angular keep-out range, which is necessary if an endstop or mechanical limit prevents a full 360-degree rotation. Similarly, `bottom_cutoff_mm` creates a circular keep-out area at the centre of the bottom cap to avoid collisions with the DUT support pole.
 
-  <img src="./docu_images/Grid Keep Out.png" alt="Grid Keep Out" style="zoom: 50%;" />
+  <img src="./docu_images/Grid%20Keep%20Out.png" alt="Grid Keep Out" style="zoom: 50%;" />
 
 ---
 
@@ -42,11 +42,9 @@ The grid points are initially laid out as a cylindrical surface wrapped by a Fib
 
 * **Cap vs. Wall Allocation:** The script automatically calculates how many points belong on the end caps versus the side walls based on the ratio of the surface area they represent.
 
-  
+  <img src="./docu_images/Cylinder%20Flat.png" alt="Cylinder Flat" style="zoom:67%;" />
 
-  <img src="./docu_images/Cylinder Flat.png" alt="Cylinder Flat" style="zoom:67%;" />
-
-  <img src="./\docu_images\Cylinder Flat Rotate.gif" alt="Cylinder Flat Rotate" style="zoom:50%;" />
+  <img src="./docu_images/Cylinder%20Flat%20Rotate.gif" alt="Cylinder Flat Rotate" style="zoom:67%;" />
 
 ---
 
@@ -54,9 +52,9 @@ The grid points are initially laid out as a cylindrical surface wrapped by a Fib
 
 After the base cylinder is wrapped, the script assigns a "magnetic attraction" value to each point, pulling it outward to give the cylinder walls and caps a volumetric "thickness". The maximum distance of this outward expansion is defined by the `wall_thickness_mm` parameter.
 
-<img src="./docu_images/Cylinder Thicknes.png" alt="Cylinder Thicknes" style="zoom:67%;" />
+<img src="./docu_images/Cylinder%20Thicknes.png" alt="Cylinder Thicknes" style="zoom:67%;" />
 
-<img src="./docu_images/Cylinder Thick Rotate.gif" alt="Cylinder Thick Rotate" style="zoom:50%;" />
+<img src="./docu_images/Cylinder%20Thick%20Rotate.gif" alt="Cylinder Thick Rotate" style="zoom:67%;" />
 
 ### The Blind Spot Problem (Bessel Nulls)
 
@@ -107,6 +105,7 @@ The formula for the pull strength is:
 $$dr = d_{max} \cdot (u_k^P)$$
 
 **Where:**
+
 * $dr$ = The Radial Displacement
 * $d_{max}$ = The Maximum Thickness
 * $u_k$ = The Sine-Hash Value
