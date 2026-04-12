@@ -24,11 +24,11 @@ This script generates a CSV file containing the coordinates for every measuremen
 
 * **Point Density:** The `num_points` parameter dictates the total number of measurement locations. A value between 1000 and 2000 is generally a reasonable default for standard operations.
 
-  <img src="./docu_images/200_1000_points.png" alt="200_1000_points" style="zoom:67%;" />
+  <img src="./docu_images/200_1000_points.png" alt="200_1000_points"  />
 
 * **Keep-Out Zones:** The script includes parameters to define physical limits where the microphone cannot travel. The `phi_min_deg` and `phi_max_deg` parameters create an angular keep-out range, which is necessary if an endstop or mechanical limit prevents a full 360-degree rotation. Similarly, `bottom_cutoff_mm` creates a circular keep-out area at the centre of the bottom cap to avoid collisions with the DUT support pole.
 
-  <img src="./docu_images/Grid%20Keep%20Out.png" alt="Grid Keep Out" style="zoom: 50%;" />
+  <img src="./docu_images/Grid%20Keep%20Out.png" alt="Grid Keep Out"  />
 
 ---
 
@@ -42,7 +42,7 @@ The grid points are initially laid out as a cylindrical surface wrapped by a Fib
 
 * **Cap vs. Wall Allocation:** The script automatically calculates how many points belong on the end caps versus the side walls based on the ratio of the surface area they represent.
 
-  <img src="./docu_images/Cylinder%20Flat.png" alt="Cylinder Flat" style="zoom:67%;" />
+  <img src="./docu_images/Cylinder%20Flat.png" alt="Cylinder Flat"  />
 
   ![Cylinder Flat Rotate 2](./docu_images/Cylinder%20Flat%20Rotate%202.gif)
 
@@ -52,7 +52,7 @@ The grid points are initially laid out as a cylindrical surface wrapped by a Fib
 
 After the base cylinder is wrapped, the script assigns a "magnetic attraction" value to each point, pulling it outward to give the cylinder walls and caps a volumetric "thickness". The maximum distance of this outward expansion is defined by the `wall_thickness_mm` parameter.
 
-<img src="./docu_images/Cylinder%20Thicknes.png" alt="Cylinder Thicknes" style="zoom:67%;" />
+<img src="./docu_images/Cylinder%20Thicknes.png" alt="Cylinder Thicknes"  />
 
 ![Cylinder Thick Rotate 2](./docu_images/Cylinder%20Thick%20Rotate%202.gif)
 
