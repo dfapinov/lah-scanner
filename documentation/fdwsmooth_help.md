@@ -28,6 +28,8 @@ Most acoustic analysis benefits from constant octave resolution (e.g., 1/6th oct
 
 By keeping the number of cycles ($m$) constant, the window automatically shrinks at high frequencies to stay tight and expands at low frequencies to capture enough wave cycles. This allows us to exclude as many reflections as possible while maintaining a consistent resolution across the entire sweep.
 
+![fdw infographic](./docu_images/fdw%20infographic.png)
+
 ---
 
 ## Practicality
@@ -65,6 +67,10 @@ $$\text{RFT (ms)} = \left( \frac{\sqrt{D^2 + 4D_r^2} - D}{343} \right) \times 10
 * **$D$** = Distance in meters between the speaker (DUT) and the microphone.
 * **$D_r$** = Distance in meters from the speaker/mic to the reflecting boundary.
 * **$343$** = Speed of sound in m/s (approximate for room temperature).
+
+![RFT calc](./docu_images/RFT%20calc.png)
+
+(Image of calculator in VituixCAD)
 
 ### Examples:
 1) 5ms RFT, 1/3 target Oct Res = 4 cycles needed = 760Hz frequency floor.
