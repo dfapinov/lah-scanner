@@ -44,7 +44,7 @@ The grid points are initially laid out as a cylindrical surface wrapped by a Fib
 
   <img src="./docu_images/Cylinder%20Flat.png" alt="Cylinder Flat" style="zoom:67%;" />
 
-  <img src="./docu_images/Cylinder%20Flat%20Rotate.gif" alt="Cylinder Flat Rotate" style="zoom:67%;" />
+  ![Cylinder Flat Rotate 2](./docu_images/Cylinder%20Flat%20Rotate%202.gif)
 
 ---
 
