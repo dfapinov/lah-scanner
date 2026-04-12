@@ -4,13 +4,24 @@ In standard gated measurements, we use a fixed-length window (e.g., 5ms). Howeve
 
 Because low frequencies have long wavelengths, a fixed window captures fewer cycles as the frequency drops. This makes a standard window a "frequency-variant" process: you get high resolution at the top end, but very little at the bottom.
 
-### The Trade-off
+![fixed window changing frequency](./docu_images/fixed%20window%20changing%20frequency.png)
+
 To achieve a specific octave resolution, the window must capture a minimum number of cycles for any given frequency ($f$):
+
+
 
 $$T(f) = \frac{m}{f}$$
 
-* **A Long Window ($m$ is high):** Captures more cycles per frequency. This provides high resolution and better low-end detail but risks letting in room reflections.
-* **A Short Window ($m$ is low):** Captures fewer cycles. This keeps the measurement "clean" of reflections but results in a smoothed, lower-resolution plot.
+
+
+For example, at 1KHz to achieve 1/3rd octave resolution requires 4 cycles. To achieve 1/12 octave resolution required 17 cycles.
+
+![fixed frequency changnig window](./docu_images/fixed%20frequency%20changnig%20window.png)
+
+### The Reflections vs. Resolution Trade-off
+
+* **A Long Window:** Captures more cycles per frequency. This provides high resolution and better detail but risks letting in room reflections.
+* **A Short Window:** Captures fewer cycles. This keeps the measurement "clean" of reflections but results in a smoothed, lower-resolution plot.
 
 ### The FDW Approach
 Most acoustic analysis benefits from constant octave resolution (e.g., 1/6th octave) across the entire spectrum. Instead of using a fixed time window that provides inconsistent resolution, FDW varies the window length based on the frequency being measured.
@@ -30,7 +41,9 @@ To solve this, the practical approach uses a series of overlapping windows rathe
 * **Complex Data Processing:** It calculates the complex data (both the Real and Imaginary parts, which represent Magnitude and Phase) for these windows.
 * **Interpolation:** The software then interpolates across these windows.
 
-This produces a smoothly varying mix, where the transition from one window length to the next is seamless. The result is a measurement with near-constant octave resolution that maintains its phase coherence, giving you an optimally windowed look at the DUT response with minimal reflections.
+  This produces a smoothly varying mix, where the transition from one window length to the next is seamless. The result is a measurement with near-constant octave resolution that maintains its phase coherence, giving you an optimally windowed look at the DUT response with minimal reflections.
+
+  ![fdw screenshot](./docu_images/fdw%20screenshot.png)
 
 ---
 
