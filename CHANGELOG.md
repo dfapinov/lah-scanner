@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.0] - 2026-04-25
+Gui script created to drive the measurement grid generation and processing pipeline. Some updates 
+to processing scripts to better support gui integration.
+
 ## [2.0.0] - 2026-03-20
 A compatability breaking release. All scripts have been significantly refactored with the aim of
 becoming the key post-processing pipeline a comunity project called HALS (Holographic Acoustic
