@@ -274,7 +274,7 @@ def generate_measurement_grid(
 
 
 if __name__ == "__main__":
-    from config_capture import (
+    from config_grid import (
         OUTPUT_GRID_GEN,
         cyl_radius,
         cyl_height,

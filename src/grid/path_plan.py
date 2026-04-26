@@ -183,7 +183,7 @@ def plan_path(
     return out
 
 if __name__ == "__main__":
-    from config_capture import (
+    from config_grid import (
         INPUT_PATH_PLAN,
         OUTPUT_PATH_PLAN,
         DELTA_THETA_DEG,
