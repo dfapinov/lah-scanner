@@ -270,7 +270,7 @@ def generate_measurement_grid(
         if i < len(cyl_df):
             cyl_df.loc[i, 'gen_settings'] = setting
 
-    return cyl_df.to_dict(orient='list')
+    return cyl_df
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ sys.path.append(os.path.join(current_dir, 'process'))
 try:
     from grid_gen import generate_measurement_grid
     from path_plan import plan_path
-    from coord_viewer_gui import CoordViewerEngine
+    from coord_viewer_core import CoordViewerEngine
     from stage1_fdwsmooth import fdwsmooth
 except ImportError as e:
     messagebox.showerror("Import Error", f"Failed to import project scripts:\n{e}")
@@ -166,8 +166,8 @@ class SpkrScannerApp(tk.Tk):
         # Shared Data States
         self.project_dir = tk.StringVar(value=os.getcwd())
         self.project_name = tk.StringVar(value="MySpeaker")
-        self.grid_data = None  # Holds the raw grid dict
-        self.planned_data = None  # Holds the planned path dict
+        self.grid_data = None  # Holds the raw grid DataFrame
+        self.planned_data = None  # Holds the planned path DataFrame
 
         # Track state for pop-up UI viewers
         self.stage5_viewer = None

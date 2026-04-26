@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.2.0] - 2026-04-26
+Refactor coord_viewer_gui.py as separate plotting core and gui scripts, plus code comments.
+Update readme.md
+
 ## [2.1.0] - 2026-04-25
 Gui script created to drive the measurement grid generation and processing pipeline. Some updates 
 to processing scripts to better support gui integration.

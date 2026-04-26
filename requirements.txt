@@ -1,4 +1,4 @@
-# Loudspeaker Acoustic Holography Scanner – Python dependencies
+# Holographic Acoustic Loudspeaker Scanner (HALS) - Post-Processing Pipeline dependencies
 # --------------------------------------------------------------
 # Install all packages with:
 #     pip install -r requirements.txt
@@ -10,4 +10,3 @@ pandas           # CSV and table-style data manipulation
 soundfile        # Read/write WAV files via libsndfile backend
 matplotlib       # Graphs, plots, and optional 3D visualisation (mpl_toolkits)
 h5py             # Read/write .h5 coefficient data
-sounddevice      # ASIO/PortAudio interface for sweep capture

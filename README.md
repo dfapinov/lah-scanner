@@ -1,104 +1,65 @@
-# Loudspeaker Acoustic Holography Scanner (LAH Scanner)
+# Holographic Acoustic Loudspeaker Scanner (HALS) - Post-Processing Pipeline
+*(Formerly Loudspeaker Acoustic Holography Scanner - LAH Scanner)*
 
-This project is a Python code pipeline to run a 3D loudspeaker measurement system.
-
-This code is in the process of being adapted as part of a larger comunity project calls HALS.
-
+This project is a Python code pipeline for the post-processing of 3D loudspeaker measurement data, representing the core processing component of the community project called **HALS**.
 
 ---
 
 ![Project Image](images/main_cartoon_small.png)
 
-
 ## What It Does
 
-The LAH Scanner project is designed to capture impulse responses (IRs) of a loudspeaker at many positions arranged on a cylindrical measurement grid around the device under test.
+The HALS project is designed to process impulse responses (IRs) of a loudspeaker captured at many positions arranged on a cylindrical measurement grid around the device under test.
 
 These IRs are processed through **spherical harmonic expansion (SHE)**, which uses harmonic orders to describe the amplitude, phase, and direction of the sound field mathematically.
 
 From this data, the sound field originating from the loudspeaker (internal to the measurement grid) can be separated from contributions from outside (room reflections and modes) to attain **anechoic data**.
 
-This anechoic sound field can be **projected to any point in space** (outside the original grid), allowing the full 3D directivity, frequency response, and phase to be reconstructed at any desired distance or angle.
-
-The scripts presented here make this possible.
+This anechoic sound field can be **projected to any point in space** (outside the original grid), allowing the full 3D directivity, frequency response, and phase to be reconstructed at any desired distance or angle (including full CTA-2034 "Spinorama" data).
 
 ![Measurment Grid Illustration](images/synth_ir.png)
 
 ---
 
-## Beta version
-This is a beta code release. Therefore the documentation below is out of date on many aspects.
-Updates and documentation to follow.
+## Graphical User Interface (GUI)
+
+The entire pipeline can now be operated via a user-friendly Graphical User Interface (GUI). 
+To launch the GUI, run:
+
+```bash
+python src/hals_gui.py
+```
+![Measurment Grid Illustration](images/hals_gui_image.png)
+The GUI streamlines project management and grid generation as well as all processing steps to go from a directory of impulse responses to a full acoustic reconstruction while providing real-time execution tracking and graphical plots. The final stage allows detailed control over the export of frequency response and impulse response data from the reconstruction.
+
+---
 
 ## Code Overview
 
-Scipts are mostly self-contained and can be run directly from the command prompt.  
+The project is divided into two primary functional groups: **Grid Generation & Planning** and the **Processing Pipeline**. Detailed documentation for each stage can be found in the `documentation/` folder.
 
-Example: python ir_gen_piston.py
+### 🎤 Grid Generation
+- Generates coordinates for a cylindrical measurement grid using methods optimized to reduce regular spacing anomalies and Bessel nulls.
+- Path planning algorithm orders coordinates for a robotic microphone arm to minimize motion on the heavy rotational axis and avoid travel through the cylinder internal volume.
 
-Below is a brief summary of each script and what it does. 
- 
-For detailed explanations and user settings, ***see the code comments***.  
+### 💻 Processing Pipeline
 
-Additionally, see help_notes.md
+The pipeline consists of 5 sequential stages:
 
-The scripts are divided into two groups: **Capture** and **Process**.
+#### Stage 1: FDW & Smoothing
+Applies Frequency Dependent Windowing (FDW) to limit room reflections while preserving a consistent octave resolution, followed by complex domain smoothing to smooth HF comb filtering and reject chaotic reflection data based on the rate of phase slope.
 
----
+#### Stage 2: Acoustic Origin
+Automatically searches 3D space to locate the frequency-dependent acoustic origin of the loudspeaker. This prevents mathematical "ill-conditioning" by centering the solver on the true source of radiation.
 
-### 🧭 Capture Scripts
+#### Stage 3: Optimize SHE
+Runs a lightweight optimizer to find the Harmonic Order N ceiling for your input data based on sound field separation performance, and tunes regularization (Lambda) settings based on data noise floor.
 
-#### `ir_gen_piston.py`
-Generates synthetic impulse responses for points provided in a CSV file.  
-Useful for testing when no hardware capture device is available.
+#### Stage 4: SHE Solve
+The core computational engine. Performs the spherical harmonic expansion and sound field separation across the entire frequency range.
 
-#### `config_capture.py`
-Contains user settings for the capture pipeline (grid size, sample rate, sweep range, IR gating, etc.).
-
-#### `stage1_grid_gen.py`
-Generates coordinates for a cylindrical measurement grid using Fibonacci spirals and radial jitter to avoid regular spacing anomalies.
-
-#### `stage2_path_planner.py`
-Orders coordinates for a robotic microphone arm (1 rotational + 2 linear axes) to minimize motion on the heavy rotational axis.
-
-#### `stage3_run_capture.py`
-Simulates robotic measurement drive (G-code over USB serial), plays/records frequency sweeps, and generates impulse responses.
-
-#### `visualize_grid_util.py`
-Plots coordinate CSV files for visualization.
-
-#### `sweep_function.py`
-Plays and records sweeps with a loopback timing reference.  
-Reports available audio devices when run directly.
-
-#### `make_ir_function.py`
-Deconvolves recorded sweeps into system impulse responses.  
-Can be run standalone or called by the capture pipeline.
-
----
-
-### ⚙️ Process Scripts
-
-#### `config_process.py`
-Configuration file for all processing stages.  
-Controls IR gating, LF/HF crossover, frequency range, solver settings, propagation angles, and output options.
-
-#### `crossover_check.py`
-Calculates a recommended LF/HF crossover frequency based on measurement geometry.
-
-#### `stage1_preprocess_irs.py`
-Windows IRs into LF (long gate) and HF (short gate) versions, applies filtering and normalization.
-
-#### `stage2_she.py`
-Performs spherical harmonic expansion (SHE) using adaptive harmonic order *N*.  
-This is the main computational stage.
-
-#### `stage3_extract_frd.py`
-Performs **sound field separation** and evaluates the pressure field at chosen coordinates.  
-Exports frequency responses (`.frd` files) and supports both arcs and arbitrary coordinate lists.
-
-#### `stage4_make_ir_from_complex.py`
-Converts complex pressure data from Stage 3 back into time-domain impulse responses for convolution or auralization.
+#### Stage 5: Extract Pressures
+Evaluates the 3D sound field at your chosen coordinates (e.g., 1m on-axis, arc sweeps, CTA-2034 standards or custom lists). Exports FRD files (with optional Time-of-Flight phase subtraction) and impulse responses (WAVs) for use in simulation or auralization software.
 
 ---
 
@@ -112,7 +73,6 @@ Converts complex pressure data from Stage 3 back into time-domain impulse respon
 | `soundfile` | Read/write WAV files |
 | `matplotlib` | Plotting and 3D visualization |
 | `h5py` | Read/write `.h5` coefficient data |
-| `sounddevice` | ASIO/PortAudio interface for sweep capture |
 
 ---
 # Installation
@@ -121,20 +81,14 @@ Converts complex pressure data from Stage 3 back into time-domain impulse respon
 2. Open a terminal in that directory.  
 3. Run the following command to install all required dependencies:  
  
+   ```bash
    pip install -r requirements.txt
+   ```
    
-Start by runnining ir_gen_piston.py
-
-This will create idealized test data that you can use to explore the full processing pipeline.
-
----
-
-## What Still Needs To Be Done
-
-- **Build hardware** for taking impulse response measurements around the loudspeaker.
-- **Create a robotic driver script** (G-code over USB serial).
-- **Develop a simple GUI** so non–command-line users can operate the pipeline.
-- **Develop script to extract anechoic distortion data** see recommendations.md with process overview.
+4. Launch the GUI:
+   ```bash
+   python src/hals_gui.py
+   ```
 
 ---
 
@@ -147,6 +101,6 @@ If you use or modify this code, please credit the original author.
 
 ⭐ **Enjoy exploring loudspeaker acoustics and spatial sound-field analysis!**
 
-***[ Dm17rY F4pp1n0v ]***
+***[ Dm17ri F4pp1n0v ]***
 
 ![Impulse Waveform](images/ir_thin.png)

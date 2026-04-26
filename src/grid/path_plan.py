@@ -174,13 +174,13 @@ def plan_path(
         
     if show_replay:
         import tkinter as tk
-        from coord_viewer_gui import TkinterCoordApp
+        from coord_viewer_util import TkinterCoordApp
         root = tk.Tk()
         app = TkinterCoordApp(root)
         app.engine.load_data(out)
         root.mainloop()
         
-    return out.to_dict(orient='list')
+    return out
 
 if __name__ == "__main__":
     from config_capture import (
