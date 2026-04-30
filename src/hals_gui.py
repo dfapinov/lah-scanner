@@ -597,8 +597,8 @@ class SpkrScannerApp(tk.Tk):
         geom_frame = ttk.LabelFrame(main_container, text="Geometry", padding="10")
         geom_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
         
-        geom_left = ttk.Frame(geom_frame); geom_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        geom_right = ttk.Frame(geom_frame); geom_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        geom_left = ttk.Frame(geom_frame); geom_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
+        geom_right = ttk.Frame(geom_frame); geom_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
         
         self.grid_vars['cyl_radius'] = self._add_form_entry(geom_left, "Cylinder Radius (m):", "0.20", "Cylinder internal radius (m)")
         self.grid_vars['cyl_height'] = self._add_form_entry(geom_left, "Cylinder Height (m):", "0.50", "Cylinder internal height (m)")
@@ -609,12 +609,12 @@ class SpkrScannerApp(tk.Tk):
         ko_frame = ttk.LabelFrame(main_container, text="Keep Out", padding="10")
         ko_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
         
-        ko_left = ttk.Frame(ko_frame); ko_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        ko_right = ttk.Frame(ko_frame); ko_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        ko_left = ttk.Frame(ko_frame); ko_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
+        ko_right = ttk.Frame(ko_frame); ko_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
         
         self.grid_vars['phi_min_deg'] = self._add_form_entry(ko_left, "Phi Min (deg):", "-170.0", "Phi cut limits (degrees, cylindrical azimuth)")
-        self.grid_vars['phi_max_deg'] = self._add_form_entry(ko_left, "Phi Max (deg):", "180.0", "Phi cut limits (degrees, cylindrical azimuth)")
-        self.grid_vars['bottom_cutoff_mm'] = self._add_form_entry(ko_right, "Bottom Cutoff (mm):", "30.0", "Remove bottom-cap points within this radius from center (mm) for support pole")
+        self.grid_vars['phi_max_deg'] = self._add_form_entry(ko_right, "Phi Max (deg):", "180.0", "Phi cut limits (degrees, cylindrical azimuth)")
+        self.grid_vars['bottom_cutoff_mm'] = self._add_form_entry(ko_left, "Bottom Cutoff (mm):", "30.0", "Remove bottom-cap points within this radius from center (mm) for support pole")
 
         # --- Path Plan ---
         plan_frame = ttk.LabelFrame(main_container, text="Path Plan", padding="10")
@@ -627,21 +627,70 @@ class SpkrScannerApp(tk.Tk):
 
         self.adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
         
-        adv_left = ttk.Frame(self.adv_frame); adv_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        adv_right = ttk.Frame(self.adv_frame); adv_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        adv_cols_frame = ttk.Frame(self.adv_frame)
+        adv_cols_frame.pack(side=tk.TOP, fill=tk.X, expand=True)
+        
+        adv_left = ttk.Frame(adv_cols_frame); adv_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
+        adv_right = ttk.Frame(adv_cols_frame); adv_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
         
         self.grid_vars['wall_thickness_mm'] = self._add_form_entry(adv_left, "Wall Thickness (mm):", "50.0", "The maximum distance points can be pulled outwards (D_max)")
-        self.grid_vars['cap_fraction'] = self._add_form_entry(adv_left, "Cap Fraction (0-1 or 'Auto'):", "Auto", "Fraction of points on both end-caps combined. None = Auto (end cap to side wall area based). 0-1 = Manually enter a fraction.")
+        self.grid_vars['cap_fraction'] = self._add_form_entry(adv_right, "Cap Fraction (0-1 or 'Auto'):", "Auto", "Fraction of points on both end-caps combined. None = Auto (end cap to side wall area based). 0-1 = Manually enter a fraction.")
         self.grid_vars['P_side'] = self._add_form_entry(adv_left, "P_side (Pull Power):", "0.5", "Magnetic pull bias on cylinder sides - >0.5")
-        self.grid_vars['P_caps'] = self._add_form_entry(adv_left, "P_caps (Pull Power):", "0.8", "Power for magnetic pull on cylinder caps")
+        self.grid_vars['P_caps'] = self._add_form_entry(adv_right, "P_caps (Pull Power):", "0.8", "Power for magnetic pull on cylinder caps")
         self.grid_vars['cap_tol_mm'] = self._add_form_entry(adv_left, "Cap Tolerance (mm):", "Auto: wall_thickness_mm + 1mm", "Points within ±CAP_TOL_MM of min/max z are treated as caps (top/bottom).")
-        self.grid_vars['side_snake_start'] = self._add_combobox(adv_left, "Side Snake Start:", ["up", "down"], "up", "Initial z traversal direction for sidewall bins: 'up' or 'down'.")
-
         self.grid_vars['azimuth_weight_center_deg'] = self._add_form_entry(adv_right, "Azimuth Weight Center (deg):", "0.0", "Angle (deg) for the center of the high-density zone.")
-        self.grid_vars['z_rotation_deg'] = self._add_form_entry(adv_right, "Z Rotation 2nd Spiral (deg):", "90.0", "Rotate second spiral around Z (deg)")
-        self.grid_vars['generate_reverse_spiral'] = self._add_checkbutton(adv_right, "Generate Reverse Spiral", True, "Make second (reverse) spiral")
-        self.grid_vars['flip_poles'] = self._add_checkbutton(adv_right, "Flip Poles (2nd Spiral)", False, "Flip Z sign of second spiral")
-        self.grid_vars['z_midpoint_zero'] = self._add_checkbutton(adv_right, "Z Midpoint = 0", True, "True = Z axis centred at 0 mm (equal negative and positive values).\nFalse = Z axis all positive like physical robot axis.")
+        self.grid_vars['z_rotation_deg'] = self._add_form_entry(adv_left, "Z Rotation 2nd Spiral (deg):", "90.0", "Rotate second spiral around Z (deg)")
+        self.grid_vars['side_snake_start'] = self._add_combobox(adv_right, "Side Snake Start:", ["up", "down"], "up", "Initial z traversal direction for sidewall bins: 'up' or 'down'.")
+        
+        cb_frame_container = ttk.Frame(self.adv_frame)
+        cb_frame_container.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        
+        cb_frame1 = ttk.Frame(cb_frame_container); cb_frame1.pack(anchor=tk.W, pady=2)
+        self.grid_vars['generate_reverse_spiral'] = self._add_checkbutton(cb_frame1, "Generate Reverse Spiral", True, "Make second (reverse) spiral")
+        
+        cb_frame2 = ttk.Frame(cb_frame_container); cb_frame2.pack(anchor=tk.W, pady=2)
+        self.grid_vars['flip_poles'] = self._add_checkbutton(cb_frame2, "Flip Poles (2nd Spiral)", False, "Flip Z sign of second spiral")
+        
+        cb_frame3 = ttk.Frame(cb_frame_container); cb_frame3.pack(anchor=tk.W, pady=2)
+        self.grid_vars['z_midpoint_zero'] = self._add_checkbutton(cb_frame3, "Z Midpoint = 0", True, "True = Z axis centred at 0 mm (equal negative and positive values).\nFalse = Z axis all positive like physical robot axis.")
+
+        # --- Physical Waypoints ---
+        ttk.Label(self.adv_frame, text="Physical Waypoints (Optional):", font=("Arial", 9, "bold")).pack(side=tk.TOP, anchor=tk.W, pady=(15, 5))
+        
+        wp_frame = ttk.Frame(self.adv_frame)
+        wp_frame.pack(side=tk.TOP, fill=tk.X, padx=5)
+
+        ttk.Label(wp_frame, text="Waypoint", font=("Arial", 8, "bold")).grid(row=0, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+        ttk.Label(wp_frame, text="Radius (r_mm)", font=("Arial", 8, "bold")).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(wp_frame, text="Azimuth (phi_deg)", font=("Arial", 8, "bold")).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(wp_frame, text="Height (z_mm)", font=("Arial", 8, "bold")).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+
+        def _add_wp_entry(row, col, default_val):
+            var = tk.StringVar(value=default_val)
+            entry = ttk.Entry(wp_frame, textvariable=var, width=12)
+            entry.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+            return var
+
+        lbl_top = ttk.Label(wp_frame, text="Top Critical:")
+        lbl_top.grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+        ToolTip(lbl_top, "Overrides cylinder radius and height.")
+        self.grid_vars['wp_top_r']   = _add_wp_entry(1, 1, "")
+        self.grid_vars['wp_top_phi'] = _add_wp_entry(1, 2, "")
+        self.grid_vars['wp_top_z']   = _add_wp_entry(1, 3, "")
+
+        lbl_bot = ttk.Label(wp_frame, text="Bottom Critical:")
+        lbl_bot.grid(row=2, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+        ToolTip(lbl_bot, "Overrides bottom cutoff.")
+        self.grid_vars['wp_bot_r']   = _add_wp_entry(2, 1, "")
+        self.grid_vars['wp_bot_phi'] = _add_wp_entry(2, 2, "")
+        self.grid_vars['wp_bot_z']   = _add_wp_entry(2, 3, "")
+
+        lbl_tw = ttk.Label(wp_frame, text="Tweeter:")
+        lbl_tw.grid(row=3, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+        ToolTip(lbl_tw, "Optional metadata for downstream acoustic origin optimization.")
+        self.grid_vars['wp_tw_r']    = _add_wp_entry(3, 1, "")
+        self.grid_vars['wp_tw_phi']  = _add_wp_entry(3, 2, "")
+        self.grid_vars['wp_tw_z']    = _add_wp_entry(3, 3, "")
 
         # --- Buttons ---
         self.btn_frame = ttk.Frame(main_container)
@@ -835,9 +884,41 @@ class SpkrScannerApp(tk.Tk):
         try:
             proj_name = self.project_name.get().strip() or "project"
             
+            # Auto-fill empty numerical fields with "0" to prevent float conversion crashes
+            fields_to_zero = [
+                'cyl_radius', 'cyl_height', 'num_points', 'wall_thickness_mm',
+                'bottom_cutoff_mm', 'P_side', 'P_caps', 'z_rotation_deg',
+                'phi_min_deg', 'phi_max_deg', 'azimuth_density_ratio',
+                'azimuth_weight_center_deg', 'delta_theta_deg'
+            ]
+            for key in fields_to_zero:
+                if key in self.grid_vars and not self.grid_vars[key].get().strip():
+                    self.grid_vars[key].set("0")
+
             # Parse variables safely
             cap_str = self.grid_vars['cap_fraction'].get().strip()
             cap_frac = None if cap_str.lower() in ("auto", "none", "") else float(cap_str)
+            
+            def get_wp_tuple(prefix):
+                r_str = self.grid_vars.get(f'wp_{prefix}_r', tk.StringVar(value="")).get().strip()
+                phi_str = self.grid_vars.get(f'wp_{prefix}_phi', tk.StringVar(value="")).get().strip()
+                z_str = self.grid_vars.get(f'wp_{prefix}_z', tk.StringVar(value="")).get().strip()
+                if not r_str and not phi_str and not z_str:
+                    return None
+                
+                r_str = r_str if r_str else "0.0"
+                phi_str = phi_str if phi_str else "0.0"
+                z_str = z_str if z_str else "0.0"
+                
+                try:
+                    return (float(r_str), float(phi_str), float(z_str))
+                except ValueError:
+                    print(f"Warning: Incomplete or invalid {prefix} waypoint provided. Ignoring.")
+                    return None
+
+            top_pos = get_wp_tuple('top')
+            bot_pos = get_wp_tuple('bot')
+            tw_pos = get_wp_tuple('tw')
 
             gen_params = {
                 'cyl_radius': float(self.grid_vars['cyl_radius'].get()),
@@ -856,6 +937,9 @@ class SpkrScannerApp(tk.Tk):
                 'phi_max_deg': float(self.grid_vars['phi_max_deg'].get()),
                 'azimuth_density_ratio': float(self.grid_vars['azimuth_density_ratio'].get()),
                 'azimuth_weight_center_deg': float(self.grid_vars['azimuth_weight_center_deg'].get()),
+                'top_crit_pos': top_pos,
+                'bot_crit_pos': bot_pos,
+                'tweeter_pos': tw_pos
             }
 
             self.grid_data = generate_measurement_grid(**gen_params)

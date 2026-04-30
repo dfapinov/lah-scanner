@@ -22,6 +22,11 @@ This script generates a CSV file containing the coordinates for every measuremen
 
 * **Internal vs. External Bounds:** When configuring the grid, the specified `cyl_radius` and `cyl_height` represent the internal dimensions of the cylinder, allowing you to size the grid precisely around the physical dimensions of the DUT. You must ensure the internal dimensions clear any cables or accessories connected to the DUT. The absolute maximum external dimensions of the generated grid will be the specified height and radius plus the `wall_thickness_mm` (default 50mm). 
 
+* **Physical Waypoints:** Alternatively, you can define the grid bounds using physical robot waypoints (`top_crit_pos` and `bot_crit_pos`). This allows you to jog the robot arm around the DUT and pass its actual cylindrical coordinates directly to the generator.
+  * **Top Critical Position:** A point above the DUT, far enough outward to safely clear all corners and protrusions during a 360-degree rotation. This sets the grid's maximum internal height (top) and internal radius.
+  * **Bottom Critical Position:** A point below the DUT, positioned as close to the center as safely possible while clearing the DUT support. This defines the grid's minimum internal height (bottom) and the bottom keep-out zone.
+  * **Tweeter Position:** A point directly in front of the tweeter, placed as close as safely possible without risking damage. Although unused by the grid generator, this coordinate is saved in the measurement CSV as a seed coordinate for the acoustic origin search during post-processing.
+
 * **Point Density:** The `num_points` parameter dictates the total number of measurement locations. A value between 1000 and 2000 is generally a reasonable default for standard operations.
 
   <img src="./docu_images/200_1000_points.png" alt="200_1000_points"  />

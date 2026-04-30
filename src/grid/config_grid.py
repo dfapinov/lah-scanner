@@ -26,6 +26,13 @@ azimuth_density_ratio     = 1.0     # Front-to-back point density ratio. 1.0 = u
                                     # Smaller values (2.0 - 10.0) create a wide, smooth fade. Large values (>20) create a narrow band.
 azimuth_weight_center_deg = 0.0     # Angle (deg) for the center of the high-density zone.
 
+tweeter_pos               = None    # Optional tweeter coordinate for downstream processing. Cylindrical tuple: (r_mm, phi_deg, z_mm) e.g., (150.0, 180.0, 300.0)
+
+# Optional: Define grid using physical waypoints instead of radius/height directly.
+# Provide as a cylindrical tuple: (r_mm, phi_deg, z_mm) e.g., (200.0, 180.0, 150.0)
+top_crit_pos              = None
+bot_crit_pos              = None
+
 
 generate_reverse_spiral = True    # Make second (reverse) spiral
 z_rotation_deg          = 90   # Rotate second spiral around Z (deg)

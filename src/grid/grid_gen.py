@@ -13,6 +13,35 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
+def calculate_geometry_from_cylindrical_waypoints(top_crit_pos, bot_crit_pos):
+    """
+    Calculates cylinder grid generation parameters from two physical critical points
+    provided as tuples of cylindrical coordinates (r_xy_mm, phi_deg, z_mm).
+    
+    Parameters:
+    top_crit_pos : tuple
+        Coordinates of the critical top point (r, phi, z). Defines internal cylinder radius and top Z bound.
+    bot_crit_pos : tuple
+        Coordinates of the critical bottom point (r, phi, z). Defines bottom cutoff radius and bottom Z bound.
+        
+    Returns:
+    dict
+        Dictionary containing the computed parameters:
+        - 'cyl_radius': Internal radius in meters.
+        - 'cyl_height': Internal height in meters.
+        - 'bottom_cutoff_mm': Bottom cutoff radius in millimeters.
+        - 'z_offset_mm': The absolute Z center point calculated from the waypoints.
+    """
+    top_r_mm, _, top_z_mm = top_crit_pos
+    bot_r_mm, _, bot_z_mm = bot_crit_pos
+    
+    return {
+        'cyl_radius': top_r_mm / 1000.0,
+        'cyl_height': abs(top_z_mm - bot_z_mm) / 1000.0,
+        'bottom_cutoff_mm': bot_r_mm,
+        'z_offset_mm': (top_z_mm + bot_z_mm) / 2.0
+    }
+
 def generate_cylinder_spiral(N, R, H, cap_frac,
                              reverse=False, rotate_deg=0.0, flip_z=False,
                              wall_thickness_mm=0.0,
@@ -125,11 +154,11 @@ def generate_cylinder_spiral(N, R, H, cap_frac,
     return df
 
 def generate_measurement_grid(
-    cyl_radius,
-    cyl_height,
-    num_points,
-    wall_thickness_mm,
-    bottom_cutoff_mm,
+    cyl_radius=None,
+    cyl_height=None,
+    num_points=1000,
+    wall_thickness_mm=50.0,
+    bottom_cutoff_mm=None,
     cap_fraction=None,
     P_side=0.5,
     P_caps=0.5,
@@ -140,8 +169,23 @@ def generate_measurement_grid(
     phi_min_deg=-180.0,
     phi_max_deg=180.0,
     azimuth_density_ratio=1.0,
-    azimuth_weight_center_deg=0.0
+    azimuth_weight_center_deg=0.0,
+    tweeter_pos=None,
+    top_crit_pos=None,
+    bot_crit_pos=None
 ):
+    z_offset_mm = None
+    # If valid waypoints are provided, calculate geometry and override manual settings
+    if top_crit_pos is not None and bot_crit_pos is not None:
+        geom = calculate_geometry_from_cylindrical_waypoints(top_crit_pos, bot_crit_pos)
+        cyl_radius = geom['cyl_radius']
+        cyl_height = geom['cyl_height']
+        bottom_cutoff_mm = geom['bottom_cutoff_mm']
+        z_offset_mm = geom['z_offset_mm']
+
+    if cyl_radius is None or cyl_height is None or bottom_cutoff_mm is None:
+        raise ValueError("Grid geometry missing: provide cyl_radius, cyl_height, and bottom_cutoff_mm OR top/bot waypoints.")
+
     bottom_cutoff = bottom_cutoff_mm / 1000.0
 
     # Adjust cyl_height so the requested value represents the internal clearance.
@@ -230,11 +274,15 @@ def generate_measurement_grid(
     cyl_df['r_xy_mm'] = np.round(cyl_df['r_xy_mm']).astype(int)
     H_mm = cyl_height_working * 1000.0
 
-    if z_midpoint_zero:
-        cyl_df['z_mm'] = np.round(cyl_df['z_mm']).astype(int)
+    if z_offset_mm is not None:
+        # Override legacy centering/shifting using absolute waypoint coordinates
+        cyl_df['z_mm'] = np.round(cyl_df['z_mm'] + z_offset_mm).astype(int)
     else:
-        cyl_df['z_mm'] = np.round(cyl_df['z_mm'] + H_mm/2.0).astype(int)
-        cyl_df['z_mm'] = np.clip(cyl_df['z_mm'], 0, int(round(H_mm)))
+        if z_midpoint_zero:
+            cyl_df['z_mm'] = np.round(cyl_df['z_mm']).astype(int)
+        else:
+            cyl_df['z_mm'] = np.round(cyl_df['z_mm'] + H_mm/2.0).astype(int)
+            cyl_df['z_mm'] = np.clip(cyl_df['z_mm'], 0, int(round(H_mm)))
 
     cyl_df['phi_deg'] = np.round(cyl_df['phi_deg'], 1)
 
@@ -262,7 +310,11 @@ def generate_measurement_grid(
         f"phi_min_deg={phi_min_deg}",
         f"phi_max_deg={phi_max_deg}",
         f"azimuth_density_ratio={azimuth_density_ratio}",
-        f"azimuth_weight_center_deg={azimuth_weight_center_deg}"
+        f"azimuth_weight_center_deg={azimuth_weight_center_deg}",
+        f"tweeter_pos={tweeter_pos}",
+        f"top_crit_pos={top_crit_pos}",
+        f"bot_crit_pos={bot_crit_pos}",
+        f"z_offset_mm={z_offset_mm}"
     ]
 
     cyl_df['gen_settings'] = ""
@@ -292,6 +344,9 @@ if __name__ == "__main__":
         phi_max_deg,
         azimuth_density_ratio,
         azimuth_weight_center_deg,
+        tweeter_pos,
+        top_crit_pos,
+        bot_crit_pos
     )
 
     grid_dict = generate_measurement_grid(
@@ -310,7 +365,10 @@ if __name__ == "__main__":
         phi_min_deg=phi_min_deg,
         phi_max_deg=phi_max_deg,
         azimuth_density_ratio=azimuth_density_ratio,
-        azimuth_weight_center_deg=azimuth_weight_center_deg
+        azimuth_weight_center_deg=azimuth_weight_center_deg,
+        tweeter_pos=tweeter_pos,
+        top_crit_pos=top_crit_pos,
+        bot_crit_pos=bot_crit_pos
     )
 
     cyl_df = pd.DataFrame(grid_dict)
