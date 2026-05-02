@@ -62,7 +62,7 @@ class CoordViewerEngine:
         self.ax.set_ylabel("Y (m)")
         self.ax.set_zlabel("Z (m)")
         # Set the initial camera viewing angle (elevation and azimuth)
-        self.ax.view_init(elev=30, azim=135)
+        self.ax.view_init(elev=30, azim=-45)
 
         # --- Custom Colormap ---
         # Creates a color gradient that starts at black and transitions through the HSV rainbow
@@ -120,7 +120,7 @@ class CoordViewerEngine:
         self.phi_rad = np.radians(self.phi_arr)  # Convert degrees to radians for math functions
         
         # Convert polar coordinates (radius, angle) into cartesian coordinates (X, Y)
-        self.x = -self.r_m * np.cos(self.phi_rad)
+        self.x = self.r_m * np.cos(self.phi_rad)
         self.y = self.r_m * np.sin(self.phi_rad)
         self.z = self.z_m
 

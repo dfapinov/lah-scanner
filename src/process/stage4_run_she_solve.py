@@ -266,7 +266,7 @@ def run_she_solve(
 
         # 8. Plot Fit Error and Condition Metrics
         if show_plot:
-            plot_she_results(f_sel, pct_error, res_cond, res_N, condition_metrics, P, res_resid_vec)
+            plot_she_results(f_sel, pct_error, res_cond, res_N, condition_metrics, P, res_resid_vec, save_path_prefix=save_prefix)
 
     return {
         "coeffs": res_coeffs,

@@ -443,8 +443,8 @@ class SpkrScannerApp(tk.Tk):
             # Row 3: Views, Visuals, Rotation
             row3 = ttk.Frame(self.viewer_ctrl_frame)
             row3.pack(fill=tk.X, pady=2)
-            ttk.Button(row3, text="Top", command=lambda: self.viewer.set_view(90, 180)).pack(side=tk.LEFT, padx=2)
-            ttk.Button(row3, text="Front", command=lambda: self.viewer.set_view(0, 180)).pack(side=tk.LEFT, padx=2)
+            ttk.Button(row3, text="Top", command=lambda: self.viewer.set_view(90, 0)).pack(side=tk.LEFT, padx=2)
+            ttk.Button(row3, text="Front", command=lambda: self.viewer.set_view(0, 0)).pack(side=tk.LEFT, padx=2)
             ttk.Button(row3, text="Side", command=lambda: self.viewer.set_view(0, -90)).pack(side=tk.LEFT, padx=2)
 
             ttk.Label(row3, text="Color:").pack(side=tk.LEFT, padx=(10, 2))
@@ -1095,6 +1095,9 @@ class SpkrScannerApp(tk.Tk):
             import re
             full_string = re.sub(r'\x1b\[[0-9;]*[mK]', '', full_string)
 
+            # Check if we are currently at the bottom of the scroll
+            at_bottom = self.cli_text.yview()[1] >= 0.999
+
             self.cli_text.config(state=tk.NORMAL)
             
             # Efficiently handle carriage returns and newlines
@@ -1108,7 +1111,10 @@ class SpkrScannerApp(tk.Tk):
                         self.cli_text.insert(tk.END, part)
                 if i < len(lines) - 1:
                     self.cli_text.insert(tk.END, '\n')
-            self.cli_text.see(tk.END)
+            
+            if at_bottom:
+                self.cli_text.see(tk.END)
+                
             self.cli_text.config(state=tk.DISABLED)
 
         self.after(20, self._update_cli)
@@ -1327,7 +1333,7 @@ class SpkrScannerApp(tk.Tk):
             proj_dir = self.project_dir.get()
             input_dir = os.path.join(proj_dir, "outputs")
             input_filename = f"{self.project_name.get()}_complex_data.npz"
-            output_filename = f"{self.project_name.get()}_complex_data_centered.npz"
+            output_filename = f"{self.project_name.get()}_complex_data.npz"
             
             t_x = float(self.stage2_vars['tweeter_x'].get())
             t_y = float(self.stage2_vars['tweeter_y'].get())
@@ -1733,6 +1739,7 @@ class SpkrScannerApp(tk.Tk):
             
             def launch_plotter():
                 if results:
+                    save_prefix = os.path.join(output_dir, f"{self.project_name.get()}_coefficients")
                     plot_she_results(
                         f_sel=results["freqs"],
                         pct_error=results["pct_error"],
@@ -1740,7 +1747,8 @@ class SpkrScannerApp(tk.Tk):
                         n_used=results["N_used"],
                         condition_metrics=True,
                         P_measured=results.get("P_measured"),
-                        resid_vec=results.get("residual_vector")
+                        resid_vec=results.get("residual_vector"),
+                        save_path_prefix=save_prefix
                     )
             
             self.after(0, launch_plotter)
@@ -1824,7 +1832,7 @@ class SpkrScannerApp(tk.Tk):
         zero_angle_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
         ttk.Label(zero_angle_frame, text="Zero Angle (deg):").pack(side=tk.LEFT, padx=(0, 10))
         self.stage5_vars['zero_theta_deg'] = self._add_labeled_entry(zero_angle_frame, "Theta:", "90.0", 5)
-        self.stage5_vars['zero_phi_deg'] = self._add_labeled_entry(zero_angle_frame, "Phi:", "180.0", 5)
+        self.stage5_vars['zero_phi_deg'] = self._add_labeled_entry(zero_angle_frame, "Phi:", "0.0", 5)
 
         # --- Evaluation Mode ---
         eval_frame = ttk.LabelFrame(main_container, text="Evaluation Mode", padding="10")

@@ -766,7 +766,7 @@ class SHEResultsView:
     """Pure MVC View for Stage 4 SHE Results."""
     def __init__(self, figsize=(10, 6)):
         self.fig, self.ax_err = plt.subplots(figsize=figsize)
-        self.fig.subplots_adjust(bottom=0.15)
+        self.fig.subplots_adjust(bottom=0.2)
         
         self.line_err, = self.ax_err.plot([], [], 'b-', linewidth=1.5, alpha=0.8, label='Fit Error')
         self.line_thresh = self.ax_err.axhline(y=-20.0, color='red', linestyle='--', alpha=0.7, label='10% or -20dB Error')
@@ -818,14 +818,14 @@ class SHEResultsView:
         self.ax_n.set_xlabel('Order N')
         self.ax_n.minorticks_off()
         
-        self.ax_err.legend(loc='lower right')
+        self.ax_err.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2)
         self.fig.canvas.draw_idle()
 
     @silence_log_warnings
     def update_cond_view(self, f_sel, res_cond):
         if self.fig_cond is None:
             self.fig_cond, self.ax_cond = plt.subplots(figsize=(10, 6))
-            self.fig_cond.subplots_adjust(bottom=0.15)
+            self.fig_cond.subplots_adjust(bottom=0.2)
             self.line_cond, = self.ax_cond.plot([], [], 'g-', linewidth=1.5, alpha=0.8, label='Condition Number')
             self.ax_cond.set_xscale('log')
             self.ax_cond.set_yscale('log')
@@ -835,16 +835,15 @@ class SHEResultsView:
             self.ax_cond.set_xlabel('Frequency')
             self.ax_cond.set_ylabel('Condition Number')
             self.ax_cond.set_title('SHE Solver: Matrix Condition Number vs Frequency')
-            self.ax_cond.legend(loc='upper right')
+            self.ax_cond.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=1)
         
         self.ax_cond.set_xlim(f_sel[0], f_sel[-1])
         self.line_cond.set_data(f_sel, res_cond)
         self.ax_cond.relim()
         self.ax_cond.autoscale_view()
-        self.fig_cond.tight_layout()
         self.fig_cond.canvas.draw_idle()
 
-def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndarray, n_used: np.ndarray, condition_metrics: bool, P_measured: np.ndarray = None, resid_vec: np.ndarray = None) -> None:
+def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndarray, n_used: np.ndarray, condition_metrics: bool, P_measured: np.ndarray = None, resid_vec: np.ndarray = None, save_path_prefix: str = None) -> None:
     """Standalone Tkinter Wrapper for SHE Results."""
     root, is_main = get_tk_root("SHE Solver Results")
     root.geometry("1000x700")
@@ -935,6 +934,15 @@ def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndar
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
     refresh()
+    
+    if save_path_prefix:
+        try:
+            view.fig.savefig(f"{save_path_prefix}_residual_error.png", dpi=150, bbox_inches='tight')
+            if condition_metrics and view.fig_cond:
+                view.fig_cond.savefig(f"{save_path_prefix}_condition_number.png", dpi=150, bbox_inches='tight')
+        except Exception as e:
+            print(f"Warning: Failed to save plots: {e}")
+            
     if is_main: root.mainloop()
 
 # =============================================================================
@@ -961,7 +969,7 @@ class Stage5Viewer:
         self.ax.set_zlabel('Z (Height) [m]')
         
         # Set the initial camera angle (elevation and azimuth)
-        self.ax.view_init(elev=30, azim=135)
+        self.ax.view_init(elev=30, azim=-45)
         
         # Track drawn objects so we can remove them cleanly without clearing the axes
         self._drawn_artists = []
@@ -997,7 +1005,7 @@ class Stage5Viewer:
             [pts[1], pts[3], pts[7], pts[5]], # Z+ (Top)
         ]
         
-        face_colors = ['Blue', 'Cyan', 'cyan', 'cyan', 'cyan', 'cyan']
+        face_colors = ['cyan', 'blue', 'cyan', 'cyan', 'cyan', 'cyan']
         
         poly3d = Poly3DCollection(faces, alpha=0.15, facecolors=face_colors, edgecolors='gray', linewidths=1)
         self.ax.add_collection3d(poly3d)

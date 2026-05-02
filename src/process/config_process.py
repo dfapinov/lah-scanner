@@ -154,7 +154,7 @@ OFFSET_MIC_Z = 0.0 #1795
 # Therfore, typically to match acoustics expectation Zero_Theta = 90 degrees, but depends on DUT orientation. 
 
 ZERO_THETA_DEG = 90   # Polar/elevation (0° = north pole, 90° = equator)
-ZERO_PHI_DEG   = 180  # Azimuth (0° = +X, 180° = -X / front facing)
+ZERO_PHI_DEG   = 0  # Azimuth (0° = +X, front facing)
 
 # ───────Mode 1: CTA-2034 (Spinorama) ──────────────
 CTA_MODE = False  # Set to True to generate full CTA-2034-A metrics. Overides Mode 2 and Mode 3.
@@ -175,9 +175,9 @@ USE_COORD_LIST = False  # Override sweep mode and use explicit coordinates
 COORD_LIST = [
     # (theta_deg, phi_deg, radius_m)
     (0,   0,   2.0),    # +Z (top)
-    (90,  0,   2.0),    # +X (back)
+    (90,  0,   2.0),    # +X (front)
     (90, 90,  2.0),    # +Y (left)
-    (90, 180, 2.0),    # -X (front)
+    (90, 180, 2.0),    # -X (back)
     (90, 270, 2.0),    # -Y (right)
     (180, 0,  2.0),    # -Z (bottom)
 ]
