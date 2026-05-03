@@ -28,6 +28,10 @@ A tool to investigate the properties of different measurement grid geometries. T
 **Key Features:**
 * Evaluates **Field Separation Correlation**, calculating how well the grid can distinguish between sound radiating outward (the speaker) and sound radiating inward (zero/none in this simulated case, making mode leakage from issues like Bessel nulls and spatial aliasing highly visible).
 * Evaluates the **Condition Number**, which indicates how prone the linear algebra matrix is to amplifying noise and failing (ill-conditioning).
+* Evaluates **Spatial Aliasing**, measuring Gram matrix orthogonality to highlight spatial aliasing across the grid.
+* Evaluates **White Noise Amplification (WNA)**, quantifying how much the measurement grid amplifies uncorrelated sensor noise.
+* Evaluates **Maximum Coherence**, identifying the worst-case cross-talk between spherical harmonic modes.
+* Evaluates **Effective Degrees of Freedom (EDOF)**, estimating the actual independent spatial dimensions the grid successfully captures.
 
 **Controls:**
 * **Target Order Selection:** Set the maximum expansion Order (N) to test for your specific grid design.
