@@ -613,7 +613,7 @@ class SpkrScannerApp(tk.Tk):
         ko_right = ttk.Frame(ko_frame); ko_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
         
         self.grid_vars['phi_min_deg'] = self._add_form_entry(ko_left, "Phi Min (deg):", "-170.0", "Phi cut limits (degrees, cylindrical azimuth)")
-        self.grid_vars['phi_max_deg'] = self._add_form_entry(ko_right, "Phi Max (deg):", "180.0", "Phi cut limits (degrees, cylindrical azimuth)")
+        self.grid_vars['phi_max_deg'] = self._add_form_entry(ko_right, "Phi Max (deg):", "170.0", "Phi cut limits (degrees, cylindrical azimuth)")
         self.grid_vars['bottom_cutoff_mm'] = self._add_form_entry(ko_left, "Bottom Cutoff (mm):", "30.0", "Remove bottom-cap points within this radius from center (mm) for support pole")
 
         # --- Path Plan ---
