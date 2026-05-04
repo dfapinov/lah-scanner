@@ -1740,6 +1740,12 @@ class SpkrScannerApp(tk.Tk):
             def launch_plotter():
                 if results:
                     save_prefix = os.path.join(output_dir, f"{self.project_name.get()}_coefficients")
+                    she_dict = {
+                        "freqs": results["freqs"],
+                        "coeffs": results["coeffs"],
+                        "N_used": results["N_used"],
+                        "origins_mm": results["origins_mm"]
+                    }
                     plot_she_results(
                         f_sel=results["freqs"],
                         pct_error=results["pct_error"],
@@ -1748,7 +1754,10 @@ class SpkrScannerApp(tk.Tk):
                         condition_metrics=True,
                         P_measured=results.get("P_measured"),
                         resid_vec=results.get("residual_vector"),
-                        save_path_prefix=save_prefix
+                        save_path_prefix=save_prefix,
+                        she_dict=she_dict,
+                        coords_sph=results.get("coords_sph"),
+                        c_sound=343.0
                     )
             
             self.after(0, launch_plotter)

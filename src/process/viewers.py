@@ -843,7 +843,7 @@ class SHEResultsView:
         self.ax_cond.autoscale_view()
         self.fig_cond.canvas.draw_idle()
 
-def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndarray, n_used: np.ndarray, condition_metrics: bool, P_measured: np.ndarray = None, resid_vec: np.ndarray = None, save_path_prefix: str = None) -> None:
+def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndarray, n_used: np.ndarray, condition_metrics: bool, P_measured: np.ndarray = None, resid_vec: np.ndarray = None, save_path_prefix: str = None, she_dict: dict = None, coords_sph: np.ndarray = None, c_sound: float = 343.0) -> None:
     """Standalone Tkinter Wrapper for SHE Results."""
     root, is_main = get_tk_root("SHE Solver Results")
     root.geometry("1000x700")
@@ -859,7 +859,7 @@ def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndar
     canvas_err.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
     NavigationToolbar2Tk(canvas_err, tab_err)
     
-    state = {'is_db': True, 'pct_error': pct_error.copy(), 'db_error': 20 * np.log10(np.clip(pct_error / 100.0, 1e-12, None))}
+    state = {'is_db': True, 'pct_error': pct_error.copy(), 'db_error': 20 * np.log10(np.clip(pct_error / 100.0, 1e-12, None)), 'view_spatial': None}
     
     min_n, max_n = np.min(n_used), np.max(n_used)
     boundaries, tick_locs, tick_labels = [], [], []
@@ -896,7 +896,7 @@ def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndar
         slide_frame = ttk.Frame(ctrl_frame)
         slide_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        lbl_thresh = ttk.Label(slide_frame, text="Threshold: -80 dB")
+        lbl_thresh = ttk.Label(slide_frame, text="Threshold: -90 dB")
         lbl_thresh.pack(side=tk.LEFT, padx=5)
         
         def update_thresh(val):
@@ -912,8 +912,8 @@ def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndar
             state['db_error'] = 20 * np.log10(np.clip(state['pct_error'] / 100.0, 1e-12, None))
             refresh()
             
-        thresh_slider = ttk.Scale(slide_frame, from_=-80.0, to=0.0, orient=tk.HORIZONTAL, command=update_thresh)
-        thresh_slider.set(-80.0)
+        thresh_slider = ttk.Scale(slide_frame, from_=-90.0, to=0.0, orient=tk.HORIZONTAL, command=update_thresh)
+        thresh_slider.set(-90.0)
         thresh_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
     if condition_metrics:
@@ -924,11 +924,80 @@ def plot_she_results(f_sel: np.ndarray, pct_error: np.ndarray, res_cond: np.ndar
         canvas_cond.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         NavigationToolbar2Tk(canvas_cond, tab_cond)
 
+    if she_dict is not None and coords_sph is not None and P_measured is not None:
+        tab_spatial = ttk.Frame(notebook)
+        notebook.add(tab_spatial, text="Spatial Error")
+        
+        lbl_spatial_status = ttk.Label(tab_spatial, text="Click 'Compute Spatial Error' to process data.", font=("Arial", 12))
+        lbl_spatial_status.pack(expand=True)
+        
+        btn_compute = ttk.Button(tab_spatial, text="Compute Spatial Error")
+        btn_compute.pack(pady=10)
+        
+        spatial_frame = ttk.Frame(tab_spatial)
+        
+        def run_spatial_compute():
+            btn_compute.pack_forget()
+            lbl_spatial_status.config(text="Processing data, please wait...")
+            root.update()
+            threading.Thread(target=_spatial_compute_thread, daemon=True).start()
+            
+        def _spatial_compute_thread():
+            import sys, os
+            sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'misc')))
+            try:
+                from spatial_error_viewer import compute_spatial_error_data, SpatialErrorView
+                x, y, z, f, n, pm, pr = compute_spatial_error_data(she_dict, P_measured, coords_sph, c_sound)
+                root.after(0, lambda: _on_spatial_compute_done(x, y, z, f, n, pm, pr, SpatialErrorView))
+            except Exception as e:
+                root.after(0, lambda: lbl_spatial_status.config(text=f"Error computing spatial data: {e}"))
+                
+        def _on_spatial_compute_done(x_coords, y_coords, z_coords, sub_freqs, sub_n_used, p_measured_all, p_reconstructed_all, SpatialErrorView):
+            lbl_spatial_status.pack_forget()
+            spatial_frame.pack(fill=tk.BOTH, expand=True)
+            
+            ctrl_spatial = ttk.Frame(spatial_frame, padding=5)
+            ctrl_spatial.pack(side=tk.BOTTOM, fill=tk.X)
+            
+            lbl_freq = ttk.Label(ctrl_spatial, text="Frequency: N/A")
+            lbl_freq.pack(side=tk.TOP, anchor=tk.W, padx=5)
+            
+            slider_freq = ttk.Scale(ctrl_spatial, from_=0, to=max(0, len(sub_freqs)-1), orient=tk.HORIZONTAL)
+            slider_freq.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
+            
+            lbl_thresh = ttk.Label(ctrl_spatial, text="Threshold: -30 dB")
+            lbl_thresh.pack(side=tk.TOP, anchor=tk.W, padx=5)
+            
+            slider_thresh = ttk.Scale(ctrl_spatial, from_=-90.0, to=0.0, orient=tk.HORIZONTAL)
+            slider_thresh.set(-30.0)
+            slider_thresh.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
+            
+            state['view_spatial'] = SpatialErrorView(figsize=(10, 5))
+            canvas_spatial = FigureCanvasTkAgg(state['view_spatial'].fig, master=spatial_frame)
+            canvas_spatial.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+            NavigationToolbar2Tk(canvas_spatial, spatial_frame)
+            
+            def update_spatial(*args):
+                idx = int(float(slider_freq.get()))
+                thresh = float(slider_thresh.get())
+                lbl_freq.config(text=f"Frequency: {sub_freqs[idx]:.1f} Hz")
+                lbl_thresh.config(text=f"Threshold: {thresh:.1f} dB")
+                state['view_spatial'].update_view(x_coords, y_coords, z_coords, sub_freqs[idx], sub_n_used[idx], p_measured_all[idx, :], p_reconstructed_all[idx, :], thresh)
+                
+            slider_freq.config(command=update_spatial)
+            slider_thresh.config(command=update_spatial)
+            slider_freq.set(0)
+            update_spatial()
+            
+        btn_compute.config(command=run_spatial_compute)
+
     def on_closing():
         import gc
         plt.close(view.fig)
         if condition_metrics and view.fig_cond:
             plt.close(view.fig_cond)
+        if state['view_spatial'] is not None:
+            plt.close(state['view_spatial'].fig)
         root.destroy()
         gc.collect()
 
