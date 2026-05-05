@@ -98,7 +98,7 @@ import math
 import threading
 import time
 from datetime import datetime
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, get_context
 from concurrent.futures import ThreadPoolExecutor
 from scipy.optimize import minimize
 import schema
@@ -231,7 +231,7 @@ def generate_3d_landscape_volumetric(context):
     
     start_time = time.time()
     
-    with Pool(cpu_count()) as pool:
+    with get_context('spawn').Pool(cpu_count()) as pool:
         cursor = pool.imap(_worker_landscape_3d, pixels, chunksize=200)
         for i, val in enumerate(cursor):
             r_idx, c_idx, d_idx = np.unravel_index(i, X_mesh.shape)

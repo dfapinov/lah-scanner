@@ -27,7 +27,7 @@ except ImportError as e:
 # --- Configuration ---
 # Set to True to enable debug logging. This will write all CLI output to a timestamped 'hals_debug_*.log' file 
 # and mirror it back to the original console terminal for easier debugging.
-DEBUG_MODE = True # True / False
+DEBUG_MODE = False # True / False
 
 
 class QueueRedirector:

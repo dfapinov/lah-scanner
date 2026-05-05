@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.2] - 2026-05-05
+
+Fixed: Severe performance bottleneck on Linux during parallel processing (Thread Thrashing). How: Enforced single-threading for underlying C math libraries (OpenBLAS, MKL, OMP, etc.) before importing NumPy, preventing CPU oversubscription.
+
+Fixed: Potential deadlocks and memory bloat on Linux when using Python's `multiprocessing`. How: Explicitly set the multiprocessing context start method to `'spawn'` rather than the Linux default `'fork'` to ensure clean process initialization when interacting with multithreaded math libraries.
+
+Fixed: `RuntimeError: main thread is not in main loop` crashing the application when opening result viewers. How: Enforced strict thread-safety by marshaling all Tkinter window creation (e.g., Validation UI, SHE Plotter) back to the main GUI thread using `.after()` callbacks after background processing threads complete.
+
 ## [2.2.1] - 2026-05-05
 
 Added: Project file naming and auto-discovery in the HALS GUI. How: Project settings are now saved using the specific project name (e.g., `[project_name]_project.json`) rather than a generic filename. When browsing to a new project directory, the application automatically scans for any file ending in `_project.json`, loads the configuration, and updates the Project Name field in the UI to match the discovered file.
@@ -64,4 +72,3 @@ as most modern audio interfaces exhibit flat frequency response.
 - Initial stable release of the capture and SHE processing pipeline.
 
 ---
-

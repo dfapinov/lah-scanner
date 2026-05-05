@@ -10,7 +10,15 @@ Step 3: Sweeps lambdas AND threshold brackets for both orders to find
 
 import os
 import sys
+
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
 import numpy as np
+import multiprocessing
 import concurrent.futures
 import schema
 
@@ -87,7 +95,8 @@ def run_open_branch_optimizer(
             for N, st_db, mx_db, lam in configs:
                 tasks.append((f, Pk, r_k, th_k, ph_k, N, st_db, mx_db, lam, base_norm, speed_of_sound, kr_offset))
                 
-        with concurrent.futures.ProcessPoolExecutor() as ex:
+        ctx = multiprocessing.get_context('spawn')
+        with concurrent.futures.ProcessPoolExecutor(mp_context=ctx) as ex:
             raw_results = list(ex.map(_worker, tasks))
             
         agg = {}

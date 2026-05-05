@@ -68,6 +68,7 @@ import numpy as np
 import soundfile as sf
 from scipy.fft import next_fast_len
 import functools
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 import schema
 from utils import natural_keys
@@ -226,7 +227,8 @@ def fdwsmooth(
     file_infos = [(f, peaks_cache[f]) for f in wav_files]
     
     # ---- Parallel processing of individual files ----
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    ctx = multiprocessing.get_context('spawn')
+    with ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx) as executor:
         for i, (fname, H_raw, H_smooth, m) in enumerate(executor.map(worker_task, file_infos)):
             sys.stdout.write(f"\rCompleted {i+1}/{len(wav_files)}: {fname}\033[K")
             sys.stdout.flush()

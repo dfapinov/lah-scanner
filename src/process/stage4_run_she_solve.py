@@ -27,9 +27,15 @@ import importlib
 import re
 from datetime import datetime
 from typing import Optional, Tuple, Dict
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, get_context
 
 # --- Third-party imports ---
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
 import h5py
 import numpy as np
 import schema
@@ -240,7 +246,7 @@ def run_she_solve(
         tasks.append((k, f_sel[k], P[k], r_k, th_k, ph_k, N_grid, worker_cfg))
     
     # 6. Execution
-    with Pool(processes=jobs, initializer=_init_worker, initargs=(log_file_path,)) as pool:
+    with get_context('spawn').Pool(processes=jobs, initializer=_init_worker, initargs=(log_file_path,)) as pool:
         for k, cfs, resid, cond, n_val, r_vec, log_msg in pool.imap_unordered(_worker_wrapper, tasks):
             res_coeffs[k, :len(cfs)] = cfs
             res_resid[k], res_cond[k], res_N[k] = resid, cond, n_val

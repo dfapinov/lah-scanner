@@ -11,8 +11,15 @@ from __future__ import annotations
 import math
 import multiprocessing
 import sys
+import os
 from pathlib import Path
 from typing import List, Tuple, Union, Dict
+
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
 import h5py
 import numpy as np
@@ -137,7 +144,8 @@ def evaluate_she_field(
     pressures_all = np.zeros((num_freqs, num_pts), dtype=np.complex128)
     print(f"Starting parallel solve on {num_cpus} cores ({num_pts} points)...")
     
-    with multiprocessing.Pool(processes=num_cpus) as pool:
+    ctx = multiprocessing.get_context('spawn')
+    with ctx.Pool(processes=num_cpus) as pool:
         results_iter = pool.imap(func=_worker_calc_chunk, iterable=tasks)
         total_tasks = len(tasks)
         for i, result in enumerate(results_iter):

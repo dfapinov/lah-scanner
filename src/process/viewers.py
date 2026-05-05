@@ -271,7 +271,7 @@ class FrequencyBrowser3DView:
         self.ax.set_ylabel('Y (Width) mm')
         self.ax.set_zlabel('Z (Height) mm')
 
-        self.ax.view_init(elev=30, azim=135)
+        self.ax.view_init(elev=30, azim=-45)
         self.fig.canvas.mpl_connect('motion_notify_event', self._enforce_turntable)
 
     def _enforce_turntable(self, event):
@@ -418,7 +418,7 @@ class CloudBrowser3DView:
         self.ax.set_ylabel('Y (Width) mm')
         self.ax.set_zlabel('Z (Height) mm')
 
-        self.ax.view_init(elev=30, azim=135)
+        self.ax.view_init(elev=30, azim=-45)
         self.fig.canvas.mpl_connect('motion_notify_event', self._enforce_turntable)
         self.scatter_all, self.scatter_hi = None, None
 
