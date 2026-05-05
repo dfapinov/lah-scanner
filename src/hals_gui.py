@@ -9,6 +9,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import threading
 import queue
+import datetime
 
 # Append script directories to sys.path so we can import them as libraries
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -24,9 +25,9 @@ except ImportError as e:
     messagebox.showerror("Import Error", f"Failed to import project scripts:\n{e}")
 
 # --- Configuration ---
-# Set to True to enable debug logging. This will write all CLI output to a 'hals_debug.log' file 
+# Set to True to enable debug logging. This will write all CLI output to a timestamped 'hals_debug_*.log' file 
 # and mirror it back to the original console terminal for easier debugging.
-DEBUG_MODE = False # True / False
+DEBUG_MODE = True # True / False
 
 
 class QueueRedirector:
@@ -34,13 +35,35 @@ class QueueRedirector:
         self.queue = queue_obj
         self.original_stream = original_stream
         self.log_file_obj = log_file_obj
+        self._at_line_start = True
 
     def write(self, text):
         self.queue.put(text)
         if self.original_stream:
             self.original_stream.write(text)
         if self.log_file_obj:
-            self.log_file_obj.write(text)
+            if not text:
+                return
+            
+            text_for_log = text.replace('\r\n', '\n').replace('\r', '\n')
+            
+            timestamp = datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S.%f]")[:-4] + "] "
+            
+            lines = text_for_log.split('\n')
+            for i, line in enumerate(lines):
+                if i < len(lines) - 1:
+                    if self._at_line_start:
+                        self.log_file_obj.write(f"{timestamp}{line}\n")
+                    else:
+                        self.log_file_obj.write(f"{line}\n")
+                    self._at_line_start = True
+                else:
+                    if line:
+                        if self._at_line_start:
+                            self.log_file_obj.write(f"{timestamp}{line}")
+                            self._at_line_start = False
+                        else:
+                            self.log_file_obj.write(line)
             self.log_file_obj.flush()
 
     def flush(self):
@@ -326,17 +349,25 @@ class SpkrScannerApp(tk.Tk):
             try:
                 import datetime
                 import platform
-                import matplotlib
-                import scipy
-                import numpy as np
-                self.debug_log_file = open("hals_debug.log", "a", encoding="utf-8")
+                import importlib
+
+                timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                self.debug_log_file = open(f"hals_debug_{timestamp_str}.log", "w", encoding="utf-8")
                 self.debug_log_file.write(f"\n--- HALS GUI Debug Session Started: {datetime.datetime.now()} ---\n")
                 self.debug_log_file.write(f"System: {platform.system()} {platform.release()} ({platform.version()})\n")
                 self.debug_log_file.write(f"Python: {sys.version}\n")
-                self.debug_log_file.write(f"Matplotlib: {matplotlib.__version__}\n")
                 self.debug_log_file.write(f"Tkinter: {tk.TkVersion}\n")
                 self.debug_log_file.write(f"Screen: {self.winfo_screenwidth()}x{self.winfo_screenheight()}\n")
-                self.debug_log_file.write(f"NumPy: {np.__version__} | Pandas: {pd.__version__} | SciPy: {scipy.__version__}\n")
+                
+                project_libs = ['numpy', 'scipy', 'pandas', 'matplotlib', 'h5py', 'soundfile', 'sounddevice', 'schema']
+                self.debug_log_file.write("Project Libraries:\n")
+                for lib in project_libs:
+                    try:
+                        mod = importlib.import_module(lib)
+                        ver = getattr(mod, '__version__', 'Unknown')
+                        self.debug_log_file.write(f"  - {lib}: {ver}\n")
+                    except ImportError:
+                        self.debug_log_file.write(f"  - {lib}: Not Installed\n")
                 
                 if platform.system() == "Linux":
                     session = os.environ.get("XDG_SESSION_TYPE", "Unknown")
