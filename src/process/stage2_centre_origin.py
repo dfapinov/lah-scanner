@@ -543,17 +543,6 @@ def run_origin_search(
         print(f"\nSweep completed in {time.time() - start_time:.1f} seconds.")
         
 
-    # --- PLOT 1: Build the Summary Validation Graph (Macro View) ---
-    if plot_results_origins:
-        print("\nOpening Validation UI...")
-        ui = ValidationUI(sweep_results, f_all, keys, d_dict, (r_arr, th_arr, ph_arr), cfg)
-        
-        if not ui.accepted:
-            print("Validation not accepted. Returning None.")
-            return None
-    else:
-        print("\nPlotting bypassed. Accepting results automatically.")
-        
     if save_to_disk:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         save_filename = f"origins_cache_3D_{timestamp}.pkl"
@@ -565,21 +554,40 @@ def run_origin_search(
     if return_state:
         return sweep_results, f_all, keys, d_dict, (r_arr, th_arr, ph_arr), cfg, data
 
-    history_freq = []
-    history_search_x, history_search_y, history_search_z = [], [], []
+    def _do_export():
+        history_freq = []
+        history_search_x, history_search_y, history_search_z = [], [], []
 
-    for f_hz in sorted(sweep_results.keys()):
-        d = sweep_results[f_hz]
-        if d['final_c'] is not None:
-            history_freq.append(f_hz)
-            history_search_x.append(d['final_c'][0])
-            history_search_y.append(d['final_c'][1])
-            history_search_z.append(d['final_c'][2])
+        for f_hz in sorted(sweep_results.keys()):
+            d = sweep_results[f_hz]
+            if d['final_c'] is not None:
+                history_freq.append(f_hz)
+                history_search_x.append(d['final_c'][0])
+                history_search_y.append(d['final_c'][1])
+                history_search_z.append(d['final_c'][2])
 
-    return export_interpolated_origins(
-        history_freq, history_search_x, history_search_y, history_search_z, 
-        f_all, data, input_dir_origins, output_filename_origins, save_to_disk
-    )
+        return export_interpolated_origins(
+            history_freq, history_search_x, history_search_y, history_search_z, 
+            f_all, data, input_dir_origins, output_filename_origins, save_to_disk
+        )
+
+    # Save immediately upon completion
+    initial_origins = _do_export()
+
+    # --- PLOT 1: Build the Summary Validation Graph (Macro View) ---
+    if plot_results_origins:
+        print("\nOpening Validation UI...")
+        ui = ValidationUI(sweep_results, f_all, keys, d_dict, (r_arr, th_arr, ph_arr), cfg)
+        
+        if ui.accepted:
+            print("Validation accepted. Saving adjusted results...")
+            return _do_export()
+        else:
+            print("Validation UI closed.")
+            return initial_origins
+    else:
+        print("\nPlotting bypassed. Results were saved automatically.")
+        return initial_origins
 
 def main():
     try:

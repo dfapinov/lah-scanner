@@ -1125,6 +1125,10 @@ class Stage5Viewer:
 
     def _set_axes_equal(self):
         # Hack to force equal aspect ratio in matplotlib 3D plots
+        try:
+            self.ax.set_box_aspect((1, 1, 1))
+        except AttributeError:
+            pass
         limits = np.array([self.ax.get_xlim3d(), self.ax.get_ylim3d(), self.ax.get_zlim3d()])
         origin = np.mean(limits, axis=1)
         radius = 0.5 * np.max(np.abs(limits[:, 1] - limits[:, 0]))

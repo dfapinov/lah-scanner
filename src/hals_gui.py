@@ -24,17 +24,30 @@ except ImportError as e:
     messagebox.showerror("Import Error", f"Failed to import project scripts:\n{e}")
 
 # --- Configuration ---
-# Set to False to prevent stdout/stderr redirection to the GUI (useful for debugging tracebacks)
-REDIRECT_CLI_OUTPUT = False
+# Set to True to enable debug logging. This will write all CLI output to a 'hals_debug.log' file 
+# and mirror it back to the original console terminal for easier debugging.
+DEBUG_MODE = False # True / False
 
 
 class QueueRedirector:
-    def __init__(self, queue_obj):
+    def __init__(self, queue_obj, original_stream=None, log_file_obj=None):
         self.queue = queue_obj
+        self.original_stream = original_stream
+        self.log_file_obj = log_file_obj
+
     def write(self, text):
         self.queue.put(text)
+        if self.original_stream:
+            self.original_stream.write(text)
+        if self.log_file_obj:
+            self.log_file_obj.write(text)
+            self.log_file_obj.flush()
+
     def flush(self):
-        pass
+        if self.original_stream:
+            self.original_stream.flush()
+        if self.log_file_obj:
+            self.log_file_obj.flush()
 
 
 class ToolTip:
@@ -308,8 +321,52 @@ class SpkrScannerApp(tk.Tk):
         self.cli_text.config(state=tk.DISABLED)
         
         self.cli_queue = queue.Queue()
-        sys.stdout = QueueRedirector(self.cli_queue)
-        sys.stderr = QueueRedirector(self.cli_queue)
+        
+        if DEBUG_MODE:
+            try:
+                import datetime
+                import platform
+                import matplotlib
+                import scipy
+                import numpy as np
+                self.debug_log_file = open("hals_debug.log", "a", encoding="utf-8")
+                self.debug_log_file.write(f"\n--- HALS GUI Debug Session Started: {datetime.datetime.now()} ---\n")
+                self.debug_log_file.write(f"System: {platform.system()} {platform.release()} ({platform.version()})\n")
+                self.debug_log_file.write(f"Python: {sys.version}\n")
+                self.debug_log_file.write(f"Matplotlib: {matplotlib.__version__}\n")
+                self.debug_log_file.write(f"Tkinter: {tk.TkVersion}\n")
+                self.debug_log_file.write(f"Screen: {self.winfo_screenwidth()}x{self.winfo_screenheight()}\n")
+                self.debug_log_file.write(f"NumPy: {np.__version__} | Pandas: {pd.__version__} | SciPy: {scipy.__version__}\n")
+                
+                if platform.system() == "Linux":
+                    session = os.environ.get("XDG_SESSION_TYPE", "Unknown")
+                    desktop = os.environ.get("DESKTOP_SESSION", "Unknown")
+                    wayland = os.environ.get("WAYLAND_DISPLAY", "Not Set")
+                    self.debug_log_file.write(f"Linux Display: Session={session}, Desktop={desktop}, Wayland={wayland}\n")
+                elif platform.system() == "Windows":
+                    try:
+                        import ctypes
+                        awareness = ctypes.c_int(0)
+                        error = ctypes.windll.shcore.GetProcessDpiAwareness(0, ctypes.byref(awareness))
+                        if error == 0: # S_OK
+                            awareness_map = {0: "Unaware", 1: "System-Aware", 2: "Per-Monitor-Aware"}
+                            dpi_status = awareness_map.get(awareness.value, f"Unknown value ({awareness.value})")
+                            self.debug_log_file.write(f"Windows DPI: {dpi_status}\n")
+                        else:
+                            self.debug_log_file.write(f"Windows DPI: Call failed (Error code: {error})\n")
+                    except Exception as e:
+                        self.debug_log_file.write(f"Windows DPI: Could not determine ({e})\n")
+                self.debug_log_file.write("-" * 50 + "\n")
+                sys.stdout = QueueRedirector(self.cli_queue, sys.__stdout__, self.debug_log_file)
+                sys.stderr = QueueRedirector(self.cli_queue, sys.__stderr__, self.debug_log_file)
+            except Exception as e:
+                print(f"Warning: Failed to create debug log file: {e}")
+                sys.stdout = QueueRedirector(self.cli_queue)
+                sys.stderr = QueueRedirector(self.cli_queue)
+        else:
+            sys.stdout = QueueRedirector(self.cli_queue)
+            sys.stderr = QueueRedirector(self.cli_queue)
+            
         self._update_cli()
 
         self._build_grid_ops_ui()
@@ -327,16 +384,60 @@ class SpkrScannerApp(tk.Tk):
 
         # Force the paned window divider line to the exact middle
         self._center_divider()
+        
+        self._last_geometry = self.geometry()
+        self.bind("<Configure>", self._on_window_configure)
+
+        if DEBUG_MODE:
+            self._log_directory_tree(current_dir, "Program Directory Listing")
+            self._log_directory_tree(self.project_dir.get(), "Project Directory Listing")
+
+    def _log_directory_tree(self, path, title):
+        if not DEBUG_MODE or not hasattr(self, 'debug_log_file') or not self.debug_log_file:
+            return
+        self.debug_log_file.write(f"\n{title} ({path}):\n")
+        try:
+            for root_dir, dirs, files in os.walk(path):
+                if '__pycache__' in root_dir or '.git' in root_dir:
+                    continue
+                rel_path = os.path.relpath(root_dir, path)
+                level = 0 if rel_path == '.' else rel_path.count(os.sep) + 1
+                indent = ' ' * 4 * level
+                folder_name = os.path.basename(root_dir) if os.path.basename(root_dir) else path
+                self.debug_log_file.write(f"{indent}{folder_name}/\n")
+                subindent = ' ' * 4 * (level + 1)
+                for f in files:
+                    if f.endswith('.pyc'): continue
+                    try:
+                        size = os.path.getsize(os.path.join(root_dir, f))
+                        self.debug_log_file.write(f"{subindent}{f} ({size} bytes)\n")
+                    except OSError:
+                        self.debug_log_file.write(f"{subindent}{f} (Size unknown)\n")
+        except Exception as e:
+            self.debug_log_file.write(f"Could not read directory: {e}\n")
+        self.debug_log_file.write("-" * 50 + "\n")
+        self.debug_log_file.flush()
+
+    def _on_window_configure(self, event):
+        if DEBUG_MODE and event.widget == self:
+            current_geometry = self.geometry()
+            if current_geometry != self._last_geometry:
+                print(f"[DEBUG] Main Window geometry changed to: {current_geometry}")
+                self._last_geometry = current_geometry
 
     def _center_divider(self):
         w = self.main_paned.winfo_width()
         if w < 100:  # If the window hasn't fully drawn yet, wait and try again
             self.after(50, self._center_divider)
         else:
+            if DEBUG_MODE:
+                print(f"[DEBUG] Setting main paned window sash to {w // 2}")
             self.main_paned.sashpos(0, w // 2)
 
     def _on_main_tab_changed(self, event):
         selected_idx = self.main_notebook.index(self.main_notebook.select())
+        if DEBUG_MODE:
+            print(f"[DEBUG] Main tab changed to index: {selected_idx}")
         if selected_idx == 0:
             # Switched to Grid/Planning Tab
             self._create_viewer()
@@ -348,6 +449,8 @@ class SpkrScannerApp(tk.Tk):
 
     def _on_proc_tab_changed(self, event):
         selected_idx = self.proc_notebook.index(self.proc_notebook.select())
+        if DEBUG_MODE:
+            print(f"[DEBUG] Processing notebook tab changed to index: {selected_idx}")
         # Stage 5 is the 5th tab, so index 4
         if selected_idx == 4:
             self._create_stage5_viewer()
@@ -376,6 +479,8 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_note_label = ttk.Label(self.stage5_viewer_frame, text=note_text, font=("Arial", 8, "italic"))
         self.stage5_note_label.pack(side=tk.TOP, pady=(0, 2))
 
+        if DEBUG_MODE:
+            print("[DEBUG] Creating Stage 5 3D Viewer canvas")
         self.stage5_viewer = Stage5Viewer()
         self.stage5_canvas = FigureCanvasTkAgg(self.stage5_viewer.fig, master=self.stage5_viewer_frame)
         canvas_widget = self.stage5_canvas.get_tk_widget()
@@ -391,6 +496,8 @@ class SpkrScannerApp(tk.Tk):
         if self.stage5_viewer is None:
             return
 
+        if DEBUG_MODE:
+            print("[DEBUG] Destroying Stage 5 3D Viewer canvas")
         # Hide the viewer pane
         self.processing_paned_window.pane(self.stage5_viewer_frame, weight=0)
         self.processing_paned_window.pane(self.processing_paned_window.panes()[1], weight=1)
@@ -472,7 +579,13 @@ class SpkrScannerApp(tk.Tk):
             self.lbl_viewer_note = ttk.Label(self.right_frame_plot, text=note_text, font=("Arial", 8, "italic"))
             self.lbl_viewer_note.pack(side=tk.TOP, pady=(5, 0))
 
-            self.canvas_viewer = FigureCanvasTkAgg(self.viewer.fig, master=self.right_frame_plot)
+            # Create a dedicated container frame to prevent the canvas from overlapping siblings on Linux
+            self.viewer_canvas_frame = ttk.Frame(self.right_frame_plot)
+            self.viewer_canvas_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+            if DEBUG_MODE:
+                print("[DEBUG] Creating Grid/Planning 3D Viewer canvas")
+            self.canvas_viewer = FigureCanvasTkAgg(self.viewer.fig, master=self.viewer_canvas_frame)
             self.canvas_viewer.draw()
             self.canvas_viewer.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
             
@@ -537,6 +650,8 @@ class SpkrScannerApp(tk.Tk):
                 if hasattr(self.viewer, 'rot_anim') and self.viewer.rot_anim is not None:
                     self.viewer.rot_anim.event_source.stop()
                 
+                if DEBUG_MODE:
+                    print("[DEBUG] Destroying Grid/Planning 3D Viewer canvas")
                 self.canvas_viewer.get_tk_widget().destroy()
                 plt.close(self.viewer.fig)
             except Exception as e:
@@ -546,6 +661,8 @@ class SpkrScannerApp(tk.Tk):
                     self.viewer_ctrl_frame.destroy()
                 if hasattr(self, 'lbl_viewer_note') and self.lbl_viewer_note.winfo_exists():
                     self.lbl_viewer_note.destroy()
+                if hasattr(self, 'viewer_canvas_frame') and self.viewer_canvas_frame.winfo_exists():
+                    self.viewer_canvas_frame.destroy()
                 self.viewer, self.canvas_viewer = None, None
 
     def _build_grid_ops_ui(self):
@@ -774,12 +891,17 @@ class SpkrScannerApp(tk.Tk):
     def _browse_dir(self):
         directory = filedialog.askdirectory(initialdir=self.project_dir.get(), title="Select Project Directory")
         if directory:
+            if DEBUG_MODE:
+                print(f"[DEBUG] Browsed and selected project directory: {directory}")
+                self._log_directory_tree(directory, "New Project Directory Listing")
             self.project_dir.set(directory)
             self._load_settings(directory)
             
     def _browse_stage5_output_dir(self):
         directory = filedialog.askdirectory(initialdir=self.project_dir.get(), title="Select Output Directory")
         if directory:
+            if DEBUG_MODE:
+                print(f"[DEBUG] Browsed and selected stage 5 output directory: {directory}")
             # Store relative path if possible
             proj_dir = self.project_dir.get()
             try:
@@ -792,15 +914,28 @@ class SpkrScannerApp(tk.Tk):
         filepath = filedialog.askopenfilename(initialdir=self.project_dir.get(), title="Select Mic Calibration File", filetypes=[("Text Files", "*.txt"), ("FRD Files", "*.frd"), ("All Files", "*.*")])
         if filepath:
             try:
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Browsed and selected mic cal file: {filepath}")
                 rel_path = os.path.relpath(filepath, self.project_dir.get())
                 self.stage5_vars['mic_cal_file'].set(rel_path)
             except ValueError:
                 self.stage5_vars['mic_cal_file'].set(filepath)
 
     def _action_save_project(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Save Project")
         self._save_settings()
-        save_path = os.path.join(self.project_dir.get(), "scanner_project.json")
+        proj_name = self.project_name.get().strip() or "scanner"
+        save_path = os.path.join(self.project_dir.get(), f"{proj_name}_project.json")
         self.status_var.set(f"Project Saved: {save_path}")
+
+    def _save_project_if_not_exists(self):
+        proj_name = self.project_name.get().strip() or "scanner"
+        save_path = os.path.join(self.project_dir.get(), f"{proj_name}_project.json")
+        if not os.path.exists(save_path):
+            if DEBUG_MODE:
+                print(f"[DEBUG] Auto-saving initial project settings to {save_path}")
+            self._save_settings()
 
     def _save_settings(self):
         settings = {
@@ -813,7 +948,13 @@ class SpkrScannerApp(tk.Tk):
             "stage5_vars": {k: v.get() for k, v in getattr(self, 'stage5_vars', {}).items()},
             "stage4_manual_table": {str(k): v for k, v in getattr(self, 'stage4_manual_table', {}).items()}
         }
-        save_path = os.path.join(self.project_dir.get(), "scanner_project.json")
+
+        if DEBUG_MODE and hasattr(self, 'debug_log_file') and self.debug_log_file:
+            self.debug_log_file.write(f"[DEBUG] Saving project settings:\n{json.dumps(settings, indent=4)}\n")
+            self.debug_log_file.flush()
+
+        proj_name = self.project_name.get().strip() or "scanner"
+        save_path = os.path.join(self.project_dir.get(), f"{proj_name}_project.json")
         try:
             with open(save_path, "w") as f:
                 json.dump(settings, f, indent=4)
@@ -821,11 +962,32 @@ class SpkrScannerApp(tk.Tk):
             print(f"Warning: Failed to save project settings: {e}")
 
     def _load_settings(self, directory):
-        load_path = os.path.join(directory, "scanner_project.json")
+        proj_name = self.project_name.get().strip() or "scanner"
+        load_path = os.path.join(directory, f"{proj_name}_project.json")
+        
+        if not os.path.exists(load_path):
+            try:
+                json_files = [f for f in os.listdir(directory) if f.endswith("_project.json")]
+                if json_files:
+                    load_path = os.path.join(directory, json_files[0])
+                    discovered_name = json_files[0].replace("_project.json", "")
+                    self.project_name.set(discovered_name)
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Auto-discovered project name '{discovered_name}' from folder.")
+            except OSError:
+                pass
+
         if os.path.exists(load_path):
+            if DEBUG_MODE:
+                print(f"[DEBUG] Loading project settings from: {load_path}")
             try:
                 with open(load_path, "r") as f:
                     settings = json.load(f)
+
+                if DEBUG_MODE and hasattr(self, 'debug_log_file') and self.debug_log_file:
+                    self.debug_log_file.write(f"[DEBUG] Loaded settings:\n{json.dumps(settings, indent=4)}\n")
+                    self.debug_log_file.flush()
+
                 if "project_name" in settings:
                     self.project_name.set(settings["project_name"])
                 if "grid_vars" in settings:
@@ -882,6 +1044,9 @@ class SpkrScannerApp(tk.Tk):
 
     def _action_generate_and_plan(self):
         try:
+            if DEBUG_MODE:
+                print("[DEBUG] Action: Generate & Plan Path")
+            self._save_project_if_not_exists()
             proj_name = self.project_name.get().strip() or "project"
             
             # Auto-fill empty numerical fields with "0" to prevent float conversion crashes
@@ -975,6 +1140,8 @@ class SpkrScannerApp(tk.Tk):
             self.status_var.set(f"Error: Failed to generate and plan path: {str(e)}")
 
     def _action_reset_replay(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Reset Replay")
         if self.viewer and self.viewer.N > 0:
             self.viewer.rewind()
         else:
@@ -1095,8 +1262,10 @@ class SpkrScannerApp(tk.Tk):
             import re
             full_string = re.sub(r'\x1b\[[0-9;]*[mK]', '', full_string)
 
-            # Check if we are currently at the bottom of the scroll
-            at_bottom = self.cli_text.yview()[1] >= 0.999
+            # Check if we are currently within ~3 lines of the bottom of the scroll
+            total_lines = int(self.cli_text.index("end-1c").split('.')[0])
+            lines_from_bottom = (1.0 - self.cli_text.yview()[1]) * total_lines
+            at_bottom = lines_from_bottom <= 3.0
 
             self.cli_text.config(state=tk.NORMAL)
             
@@ -1120,6 +1289,9 @@ class SpkrScannerApp(tk.Tk):
         self.after(20, self._update_cli)
 
     def _action_run_stage1(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Run Stage 1")
+        self._save_project_if_not_exists()
         self.btn_stage1_run.config(state=tk.DISABLED)
         self.cli_text.config(state=tk.NORMAL)
         self.cli_text.insert(tk.END, "\n--- Starting Stage 1 ---\n")
@@ -1322,6 +1494,9 @@ class SpkrScannerApp(tk.Tk):
             self.btn_stage2_advanced.config(text="Hide Advanced Settings ▲")
 
     def _action_run_stage2(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Run Stage 2")
+        self._save_project_if_not_exists()
         self.btn_stage2_run.config(state=tk.DISABLED)
         self.cli_text.config(state=tk.NORMAL)
         self.cli_text.insert(tk.END, "\n--- Starting Stage 2 ---\n")
@@ -1398,6 +1573,7 @@ class SpkrScannerApp(tk.Tk):
                     print("Stage 2 completed successfully.")
 
                 def finish_stage2():
+                    do_save()
                     if plot_results:
                         print("\nOpening Validation UI...")
                         from viewers import ValidationUI
@@ -1409,12 +1585,11 @@ class SpkrScannerApp(tk.Tk):
                                 self.after(200, wait_for_ui)
                             else:
                                 if self.stage2_ui_instance.accepted:
+                                    print("Saving adjusted results...")
                                     do_save()
                                 else:
-                                    print("Validation not accepted. Data not saved.")
+                                    print("Validation UI closed.")
                         wait_for_ui()
-                    else:
-                        do_save()
                 
                 self.after(0, finish_stage2)
             
@@ -1485,6 +1660,9 @@ class SpkrScannerApp(tk.Tk):
             self.btn_stage3_advanced.config(text="Hide Advanced Settings ▲")
 
     def _action_run_stage3(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Run Stage 3")
+        self._save_project_if_not_exists()
         self.btn_stage3_run.config(state=tk.DISABLED)
         self.cli_text.config(state=tk.NORMAL)
         self.cli_text.insert(tk.END, "\n--- Starting Stage 3 ---\n")
@@ -1690,6 +1868,9 @@ class SpkrScannerApp(tk.Tk):
         ttk.Button(frame, text="Close", command=close_editor).pack(side=tk.BOTTOM, pady=5)
 
     def _action_run_stage4(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Run Stage 4")
+        self._save_project_if_not_exists()
         self.btn_stage4_run.config(state=tk.DISABLED)
         self.cli_text.config(state=tk.NORMAL)
         self.cli_text.insert(tk.END, "\n--- Starting Stage 4 ---\n")
@@ -1953,6 +2134,8 @@ class SpkrScannerApp(tk.Tk):
             self.btn_stage5_advanced.config(text="Hide Advanced Settings ▲")
 
     def _open_stage5_coord_table_editor(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Open Manual Coordinate List Editor")
         top = tk.Toplevel(self)
         top.title("Manual Coordinate List Editor")
         top.geometry("450x400")
@@ -2138,6 +2321,9 @@ class SpkrScannerApp(tk.Tk):
             messagebox.showerror("Preview Error", f"Could not generate preview:\n{str(e)}")
 
     def _action_run_stage5(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Run Stage 5")
+        self._save_project_if_not_exists()
         self.btn_stage5_run.config(state=tk.DISABLED)
         self.cli_text.config(state=tk.NORMAL)
         self.cli_text.insert(tk.END, "\n--- Starting Stage 5 ---\n")
@@ -2182,10 +2368,17 @@ class SpkrScannerApp(tk.Tk):
             self.after(0, lambda: self.btn_stage5_run.config(state=tk.NORMAL))
 
     def on_closing(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Action: Application closing")
         try:
             self._destroy_viewer()
         except Exception:
             pass
+        if hasattr(self, 'debug_log_file') and self.debug_log_file:
+            try:
+                self.debug_log_file.close()
+            except Exception:
+                pass
         self.quit()
         self.destroy()
         os._exit(0)

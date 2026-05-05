@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.1] - 2026-05-05
+
+Added: Project file naming and auto-discovery in the HALS GUI. How: Project settings are now saved using the specific project name (e.g., `[project_name]_project.json`) rather than a generic filename. When browsing to a new project directory, the application automatically scans for any file ending in `_project.json`, loads the configuration, and updates the Project Name field in the UI to match the discovered file.
+
+Added: Auto-saving of initial project settings in the HALS GUI. How: Save is triggered before running any processing stage or grid generation action. Checks for the existence of `scanner_project.json` and saves the current UI state if the file is not found, ensuring a baseline configuration is established without overwriting existing user saves.
+
+Added: Comprehensive Debug Mode for the HALS GUI. How: Introduced a DEBUG_MODE toggle that intercepts and mirrors all CLI output to a hals_debug.log file and the original terminal. The debug log automatically captures system-level diagnostics, library versions, directory listings with file sizes, project settings, and detailed tracking of all major UI interactions.
+
+Fixed: CLI output auto-scroll not engaging on Linux. How: Replaced fractional scroll threshold with calculation that checks if the view is within 3 lines of the bottom. Accommodates variations in font metrics and line-height.
+
+Fixed: Toolbar buttons disappearing under the 3D viewer when entering full screen on Linux. How: Wrapped the Matplotlib FigureCanvasTkAgg in a dedicated ttk.Frame container to enforce strict layout boundaries and prevent it from painting over its sibling widgets during rapid window resizing.
+
+Fixed: Stage 5 (evaluation mic positions) 3D viewer scale can change aspect ratio distorting display. How: Used Matplot set_box_aspect 1:1:1.
+
+Fixed: Stage 2 discards optimised origins if plot window is closed without using 'accept & save' button'. How: Stage 2 now saves the acoustic origns immediatly on completion. 'Accept and save' is now only needed for adjustments.
+
 ## [2.2.0] - 2026-04-26
 Refactor coord_viewer_gui.py as separate plotting core and gui scripts, plus code comments.
 Update readme.md
