@@ -63,6 +63,7 @@ Code Pipeline Overview
 import os
 import sys
 import re
+import time
 import warnings
 import numpy as np
 import soundfile as sf
@@ -154,6 +155,8 @@ def fdwsmooth(
     Main pipeline function that orchestrates the scanning, parallel processing,
     and output consolidation of FDW and smoothed IR data.
     """
+    start_time = time.time()
+
     ir_dir = input_dir
     wav_files = sorted([f for f in os.listdir(ir_dir) if f.lower().endswith('.wav')], key=natural_keys)
     if not wav_files: 
@@ -295,6 +298,9 @@ def fdwsmooth(
                 })
                 print(f"Saved SMOOTHED data to {out_path} (Raw discarded)")
     
+    elapsed = time.time() - start_time
+    print(f"\nStage 1 processing completed in {elapsed:.2f} seconds.")
+
     # Optional plotting of the resulting Frequency Domain representation
     if show_plot: 
         print("Opening Viewer...")

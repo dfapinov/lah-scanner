@@ -410,10 +410,6 @@ class CloudBrowser3DView:
         self.ax = self.fig.add_subplot(111, projection='3d')
         self.fig.subplots_adjust(bottom=0.1, left=0.05, right=0.95, top=0.9)
         
-        self.ax.set_xlim(cfg['x_bounds'])
-        self.ax.set_ylim(cfg['y_bounds'])
-        self.ax.set_zlim(cfg['z_bounds'])
-        self.ax.set_box_aspect((cfg['x_bounds'][1]-cfg['x_bounds'][0], cfg['y_bounds'][1]-cfg['y_bounds'][0], cfg['z_bounds'][1]-cfg['z_bounds'][0]))
         self.ax.set_xlabel('X (Depth) mm')
         self.ax.set_ylabel('Y (Width) mm')
         self.ax.set_zlabel('Z (Height) mm')
@@ -437,6 +433,24 @@ class CloudBrowser3DView:
         pt = (pts_x[active_idx], pts_y[active_idx], pts_z[active_idx])
         self.scatter_hi = self.ax.scatter([pt[0]], [pt[1]], [pt[2]], c='red', s=120, alpha=1.0, label='Highlighted')
         
+        # Auto-scale cubic bounds based on the actual point cloud
+        max_range = np.array([
+            np.max(pts_x) - np.min(pts_x),
+            np.max(pts_y) - np.min(pts_y),
+            np.max(pts_z) - np.min(pts_z)
+        ]).max() / 2.0
+        
+        if max_range == 0: max_range = 10.0  # Fallback if all points are identical
+        
+        mid_x = (np.max(pts_x) + np.min(pts_x)) * 0.5
+        mid_y = (np.max(pts_y) + np.min(pts_y)) * 0.5
+        mid_z = (np.max(pts_z) + np.min(pts_z)) * 0.5
+        
+        self.ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        self.ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        self.ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        self.ax.set_box_aspect((1, 1, 1))
+
         self.ax.legend(loc='upper right')
         self.ax.set_title(f"Frequency: {f:.1f} Hz\nCoordinate: ({pt[0]:.1f}, {pt[1]:.1f}, {pt[2]:.1f})", fontweight='bold')
         self.fig.canvas.draw_idle()
@@ -544,9 +558,10 @@ class ValidationView:
 
 class ValidationUI:
     """Standalone Tkinter wrapper for ValidationView."""
-    def __init__(self, sweep_results, f_all, keys, d_dict, parsed_geom, cfg):
+    def __init__(self, sweep_results, f_all, keys, d_dict, parsed_geom, cfg, save_path=None):
         self.sweep_results, self.f_all, self.keys, self.d_dict, self.cfg = sweep_results, f_all, keys, d_dict, cfg
         self.r_arr, self.th_arr, self.ph_arr = parsed_geom
+        self.save_path = save_path
         
         # Store checkbox references securely to prevent premature garbage collection
         self.vars_dict = {}
@@ -573,6 +588,12 @@ class ValidationUI:
         
         self.accepted = False
         self.refresh_plot()
+        
+        if self.save_path:
+            try:
+                self.view.fig.savefig(self.save_path, dpi=150, bbox_inches='tight')
+            except Exception as e:
+                print(f"Warning: Failed to save validation plot: {e}")
         
         if self.cfg['enable_full_grid_scan']: self.browser3d = FrequencyBrowser3D(self.sweep_results, self.cfg, show_immediately=False)
         else: self.browser3d = CloudBrowser3D(self.sweep_results, self.cfg, show_immediately=False)
@@ -732,6 +753,13 @@ class ValidationUI:
         
         self.accepted = True
         
+        if hasattr(self, 'save_path') and self.save_path:
+            try:
+                self.view.fig.savefig(self.save_path, dpi=150, bbox_inches='tight')
+                print(f"Saved validation plot to {self.save_path}")
+            except Exception as e:
+                print(f"Warning: Failed to save validation plot: {e}")
+                
         # 1. Clear out variable references to prevent Tkinter GC tracebacks
         if hasattr(self, 'vars_dict'):
             self.vars_dict.clear()

@@ -10,6 +10,7 @@ Step 3: Sweeps lambdas AND threshold brackets for both orders to find
 
 import os
 import sys
+import time
 
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
@@ -66,6 +67,8 @@ def run_open_branch_optimizer(
     kr_offset: float = 2.0,
     speed_of_sound: float = 343.0
 ):
+    start_time = time.time()
+
     input_path = os.path.join(input_dir_opti, input_filename_opti)
     parsed_data = load_and_parse_npz(input_path)
     f_all = parsed_data['freqs']
@@ -324,6 +327,9 @@ def run_open_branch_optimizer(
     noise_floor_start_db = winner['st']
     noise_floor_max_db = winner['mx']
     max_lambda = winner['lam']
+
+    elapsed = time.time() - start_time
+    print(f"\nStage 3 processing completed in {elapsed:.2f} seconds.")
     
     return target_n_max, noise_floor_start_db, noise_floor_max_db, max_lambda
 

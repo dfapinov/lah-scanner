@@ -7,8 +7,8 @@ User settings for the capture scripts that generate measruemtn grids, drive robo
 # ───────────────────────────────────────────────
 # Cylinder and pattern settings:
 OUTPUT_GRID_GEN         = "jan_cylinder_test.csv" # Default "measurment_grid.csv"
-cyl_radius              = 0.20    # Cylinder internal radius (m)
-cyl_height              = 0.50     # Cylinder internal height (m)
+cyl_radius_mm           = 200.0    # Cylinder internal radius (mm)
+cyl_height_mm           = 500.0    # Cylinder internal height (mm)
 num_points              = 1000     # Total points for the generated grid (forward + reverse spirals combined)
 
 # Keep Out areas. 

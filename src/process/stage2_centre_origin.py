@@ -311,9 +311,9 @@ class DynamicBranchSweeper:
         p_opt = opt_c if opt_c is not None else (float('nan'), float('nan'), float('nan'))
         val_opt = solve_physics_3d(p_opt[0], p_opt[1], p_opt[2], phys_context) if opt_c is not None else float('nan')
 
-        out_buf.append(f"{prefix}   -> Simplex Final    : ({p_opt[0]:>6.1f}, {p_opt[1]:>6.1f}, {p_opt[2]:>6.1f}) | Error: {val_opt:>5.2f}%")
+        out_buf.append(f"{prefix}   -> Simplex Final    : ({p_opt[0]:>6.1f}, {p_opt[1]:>6.1f}, {p_opt[2]:>6.1f}) | Fit Error: {val_opt:>5.2f}%")
         if self.cfg['enable_full_grid_scan']:
-            out_buf.append(f"{prefix}   -> Grid Scan Minima : ({true_coords[0]:>6.1f}, {true_coords[1]:>6.1f}, {true_coords[2]:>6.1f}) | Error: {val_true:>5.2f}%\n")
+            out_buf.append(f"{prefix}   -> Grid Scan Minima : ({true_coords[0]:>6.1f}, {true_coords[1]:>6.1f}, {true_coords[2]:>6.1f}) | Fit Error: {val_true:>5.2f}%\n")
         else:
             out_buf.append(f"{prefix}   -> Grid Scan Minima : Skipped (Grid Scan Bypassed)\n")
 
@@ -416,6 +416,8 @@ def run_origin_search(
     kr_offset: float = 2.0,
     return_state: bool = False
 ):
+    stage_start_time = time.time()
+
     print(f"--- Full 3D Volumetric Sweep ---")
     
     if isinstance(x_bounds, (int, float)): x_bounds = (-float(x_bounds), float(x_bounds))
@@ -477,9 +479,9 @@ def run_origin_search(
                 return d['grid'][idx_x, idx_y, idx_z]
             
             print(f"[{i+1}/{len(sweep_results)}] Cached Frequency {f_hz:.1f} Hz...")
-            print(f"   -> Simplex Final    : ({opt_c[0]:>6.1f}, {opt_c[1]:>6.1f}, {opt_c[2]:>6.1f}) | Error: {nearest_val(opt_c):>5.2f}% (approx)")
+            print(f"   -> Simplex Final    : ({opt_c[0]:>6.1f}, {opt_c[1]:>6.1f}, {opt_c[2]:>6.1f}) | Fit Error: {nearest_val(opt_c):>5.2f}% (approx)")
             if d.get('grid') is not None:
-                print(f"   -> Grid Scan Minima : ({true_coords[0]:>6.1f}, {true_coords[1]:>6.1f}, {true_coords[2]:>6.1f}) | Error: {np.min(d['grid']):>5.2f}%\n")
+                print(f"   -> Grid Scan Minima : ({true_coords[0]:>6.1f}, {true_coords[1]:>6.1f}, {true_coords[2]:>6.1f}) | Fit Error: {np.min(d['grid']):>5.2f}%\n")
             else:
                 print(f"   -> Grid Scan Minima : Skipped (Grid Scan Bypassed)\n")
 
@@ -574,10 +576,14 @@ def run_origin_search(
     # Save immediately upon completion
     initial_origins = _do_export()
 
+    elapsed = time.time() - stage_start_time
+    print(f"\nStage 2 processing completed in {elapsed:.2f} seconds.")
+
     # --- PLOT 1: Build the Summary Validation Graph (Macro View) ---
     if plot_results_origins:
         print("\nOpening Validation UI...")
-        ui = ValidationUI(sweep_results, f_all, keys, d_dict, (r_arr, th_arr, ph_arr), cfg)
+        save_path = os.path.splitext(os.path.join(input_dir_origins, output_filename_origins))[0] + "_origins.png" if save_to_disk else None
+        ui = ValidationUI(sweep_results, f_all, keys, d_dict, (r_arr, th_arr, ph_arr), cfg, save_path=save_path)
         
         if ui.accepted:
             print("Validation accepted. Saving adjusted results...")

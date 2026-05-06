@@ -153,6 +153,8 @@ def run_she_solve(
     jobs: int = None,
     show_plot: bool = True
 ) -> Dict:
+    start_time = time.time()
+
     if manual_order_table is None:
         manual_order_table = {}
     if jobs is None:
@@ -270,17 +272,20 @@ def run_she_solve(
             
         logging.info(f"Complete. Results saved to {output_h5}")
 
-        # 8. Plot Fit Error and Condition Metrics
-        if show_plot:
-            save_path_prefix = os.path.splitext(output_h5)[0] if save_to_disk else None
-            she_dict = {
-                schema.FREQS: f_sel,
-                schema.COEFFS: res_coeffs,
-                schema.N_USED: res_N,
-                schema.ORIGINS_MM: origins_sel_mm
-            }
-            coords_sph = np.column_stack((np.degrees(th_static), np.degrees(ph_static), r_static))
-            plot_she_results(f_sel, pct_error, res_cond, res_N, condition_metrics, P, res_resid_vec, save_path_prefix=save_path_prefix, she_dict=she_dict, coords_sph=coords_sph, c_sound=speed_of_sound)
+    elapsed = time.time() - start_time
+    logging.info("\nStage 4 processing completed in %.2f seconds.", elapsed)
+
+    # 8. Plot Fit Error and Condition Metrics
+    if show_plot:
+        save_path_prefix = os.path.join(input_dir_she, os.path.splitext(output_filename_she)[0]) if save_to_disk else None
+        she_dict = {
+            schema.FREQS: f_sel,
+            schema.COEFFS: res_coeffs,
+            schema.N_USED: res_N,
+            schema.ORIGINS_MM: origins_sel_mm
+        }
+        coords_sph = np.column_stack((np.degrees(th_static), np.degrees(ph_static), r_static))
+        plot_she_results(f_sel, pct_error, res_cond, res_N, condition_metrics, P, res_resid_vec, save_path_prefix=save_path_prefix, she_dict=she_dict, coords_sph=coords_sph, c_sound=speed_of_sound)
 
     return {
         "coeffs": res_coeffs,
@@ -333,8 +338,6 @@ def main() -> None:
     resolved_input_dir = os.path.join(project_root, INPUT_DIR_SHE)
     resolved_output_dir = os.path.join(project_root, OUTPUT_DIR_SHE)
 
-    start_all = time.time()
-    
     run_she_solve(
         input_filename_she=INPUT_FILENAME_SHE,
         output_filename_she=OUTPUT_FILENAME_SHE,
@@ -354,8 +357,6 @@ def main() -> None:
         jobs=args.jobs,
         show_plot=True
     )
-
-    logging.info("Total solve time: %.2f s", time.time() - start_all)
 
 if __name__ == "__main__":
     main()

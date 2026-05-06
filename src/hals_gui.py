@@ -29,6 +29,29 @@ except ImportError as e:
 # and mirror it back to the original console terminal for easier debugging.
 DEBUG_MODE = False # True / False
 
+GUI_TOOLTIPS = {
+    'output_dir': "Directory where final extracted FRD and/or WAV files will be saved.",
+    'frd_prefix': "Prefix added to the start of all extracted file names.",
+    'subtract_tof': "Mathematically subtract the time-of-flight phase delay from the DUT origin to the mic. Aligns phase to t=0.",
+    'generate_ir_files': "If checked, generates .wav impulse responses along with the standard frequency response (.frd) text files.",
+    'apply_mic_cal': "Applies the selected microphone calibration file to the extracted results.",
+    'mic_cal_mode': "Subtract (standard for measurement mics where the cal file describes the mic's own response) or Add.",
+    'offset_mic_x': "Offsets the measurement reference center relative to the physical grid center.",
+    'offset_mic_y': "Offsets the measurement reference center relative to the physical grid center.",
+    'offset_mic_z': "Offsets the measurement reference center relative to the physical grid center.",
+    'zero_theta_deg': "Defines which physical angle represents the front 'on-axis' of the speaker (Theta).",
+    'zero_phi_deg': "Defines which physical angle represents the front 'on-axis' of the speaker (Phi).",
+    'dist_mic': "Distance from the reference center to the virtual microphone.",
+    'cta_mode': "Generates standardized CTA-2034 (Spinorama) extraction points.",
+    'range_deg': "The positive and negative angular sweep range (e.g. 90 creates a 180 degree arc).",
+    'increment_deg': "The angular step size between virtual microphone positions.",
+    'direction': "The plane(s) to sweep the virtual microphone across.",
+    'manual_list_mode': "Uses a custom list of specific coordinates rather than standard sweeps.",
+    'obs_mode': "Internal (extracts direct sound from speaker), External (extracts room reflections), Full (recombines both).",
+    'mic_cal_fade_octaves': "Octave span over which the microphone calibration smoothly fades to 0dB at the extremes of the measurement.",
+    'use_optimized_origins_stage5': "Uses the frequency-dependent acoustic origins calculated in Stage 2 to extract the most accurate phase."
+}
+
 
 class QueueRedirector:
     def __init__(self, queue_obj, original_stream=None, log_file_obj=None):
@@ -498,13 +521,21 @@ class SpkrScannerApp(tk.Tk):
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
         # Add a control bar at the top of the viewer pane
-        controls_frame = ttk.LabelFrame(self.stage5_viewer_frame, text="DUT (Visual Cue Only)")
-        controls_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        top_bar = ttk.Frame(self.stage5_viewer_frame)
+        top_bar.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        
+        dut_frame = ttk.Frame(top_bar, relief=tk.GROOVE, borderwidth=2)
+        dut_frame.pack(side=tk.LEFT, fill=tk.Y)
+        
+        ttk.Label(dut_frame, text="DUT (Visual Cue Only):", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(5, 10), pady=2)
         
         # Link these entries to the same variables as the main settings
-        self._add_labeled_entry(controls_frame, "Width (Y):", self.stage5_vars['dut_width_y'], 6)
-        self._add_labeled_entry(controls_frame, "Depth (X):", self.stage5_vars['dut_depth_x'], 6)
-        self._add_labeled_entry(controls_frame, "Height (Z):", self.stage5_vars['dut_height_z'], 6)
+        self._add_labeled_entry(dut_frame, "Width (Y):", self.stage5_vars['dut_width_y'], 6, GUI_TOOLTIPS.get('dut_width_y'))
+        self._add_labeled_entry(dut_frame, "Depth (X):", self.stage5_vars['dut_depth_x'], 6, GUI_TOOLTIPS.get('dut_depth_x'))
+        self._add_labeled_entry(dut_frame, "Height (Z):", self.stage5_vars['dut_height_z'], 6, GUI_TOOLTIPS.get('dut_height_z'))
+        
+        ttk.Button(top_bar, text="Save View Image", command=self._save_stage5_image).pack(side=tk.RIGHT, padx=5)
+        ttk.Separator(top_bar, orient='vertical').pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=2)
 
         note_text = "Note: Left mouse click to drag view, middle mouse click to shift view, right mouse click to zoom."
         self.stage5_note_label = ttk.Label(self.stage5_viewer_frame, text=note_text, font=("Arial", 8, "italic"))
@@ -539,6 +570,22 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_canvas = None
         for widget in self.stage5_viewer_frame.winfo_children():
             widget.destroy()
+            
+    def _save_stage5_image(self):
+        if self.stage5_viewer is None:
+            return
+        try:
+            proj_dir = self.project_dir.get()
+            out_dir = os.path.join(proj_dir, "outputs")
+            os.makedirs(out_dir, exist_ok=True)
+            
+            proj_name = self.project_name.get().strip() or "project"
+            save_path = os.path.join(out_dir, f"{proj_name}_stage5_view.png")
+            
+            self.stage5_viewer.fig.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f"Saved Stage 5 view image to {save_path}")
+        except Exception as e:
+            print(f"Error saving Stage 5 view image: {e}")
 
     def _create_viewer(self):
         if self.viewer is None:
@@ -748,8 +795,8 @@ class SpkrScannerApp(tk.Tk):
         geom_left = ttk.Frame(geom_frame); geom_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
         geom_right = ttk.Frame(geom_frame); geom_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
         
-        self.grid_vars['cyl_radius'] = self._add_form_entry(geom_left, "Cylinder Radius (m):", "0.20", "Cylinder internal radius (m)")
-        self.grid_vars['cyl_height'] = self._add_form_entry(geom_left, "Cylinder Height (m):", "0.50", "Cylinder internal height (m)")
+        self.grid_vars['cyl_radius_mm'] = self._add_form_entry(geom_left, "Cylinder Internal Radius (mm):", "200.0", "Cylinder internal radius (mm)")
+        self.grid_vars['cyl_height_mm'] = self._add_form_entry(geom_left, "Cylinder Internal Height (mm):", "500.0", "Cylinder internal height (mm)")
         self.grid_vars['num_points'] = self._add_form_entry(geom_right, "Total Points:", "1000", "Total points for the generated grid (forward + reverse spirals combined)")
         self.grid_vars['azimuth_density_ratio'] = self._add_form_entry(geom_right, "Azimuth Density Ratio:", "1.0", "Front-to-back point density ratio. 1.0 = uniform. 5.0 = front is 5x denser than back.\nSmaller values (2.0 - 10.0) create a wide, smooth fade.\nLarge values (>20) create a narrow band.")
 
@@ -813,10 +860,39 @@ class SpkrScannerApp(tk.Tk):
         ttk.Label(wp_frame, text="Azimuth (phi_deg)", font=("Arial", 8, "bold")).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
         ttk.Label(wp_frame, text="Height (z_mm)", font=("Arial", 8, "bold")).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
 
+        def _update_cyl_dims_from_waypoints(event=None):
+            try:
+                if 'wp_top_r' in self.grid_vars:
+                    top_r_str = self.grid_vars['wp_top_r'].get().strip()
+                    if top_r_str:
+                        self.grid_vars['cyl_radius_mm'].set(f"{float(top_r_str):.1f}")
+            except ValueError:
+                pass
+
+            try:
+                if 'wp_top_z' in self.grid_vars and 'wp_bot_z' in self.grid_vars:
+                    top_z_str = self.grid_vars['wp_top_z'].get().strip()
+                    bot_z_str = self.grid_vars['wp_bot_z'].get().strip()
+                    if top_z_str and bot_z_str:
+                        height_mm = abs(float(top_z_str) - float(bot_z_str))
+                        self.grid_vars['cyl_height_mm'].set(f"{height_mm:.1f}")
+            except ValueError:
+                pass
+
+            try:
+                if 'wp_bot_r' in self.grid_vars:
+                    bot_r_str = self.grid_vars['wp_bot_r'].get().strip()
+                    if bot_r_str:
+                        self.grid_vars['bottom_cutoff_mm'].set(f"{float(bot_r_str):.1f}")
+            except ValueError:
+                pass
+
         def _add_wp_entry(row, col, default_val):
             var = tk.StringVar(value=default_val)
             entry = ttk.Entry(wp_frame, textvariable=var, width=12)
             entry.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+            entry.bind("<FocusOut>", _update_cyl_dims_from_waypoints)
+            entry.bind("<Return>", _update_cyl_dims_from_waypoints)
             return var
 
         lbl_top = ttk.Label(wp_frame, text="Top Critical:")
@@ -880,10 +956,11 @@ class SpkrScannerApp(tk.Tk):
             
         return var
 
-    def _add_labeled_entry(self, parent, label_text, default_val, width):
+    def _add_labeled_entry(self, parent, label_text, default_val, width, help_text=None):
         frame = ttk.Frame(parent)
         frame.pack(side=tk.LEFT, padx=5)
-        ttk.Label(frame, text=label_text).pack(side=tk.LEFT)
+        lbl = ttk.Label(frame, text=label_text)
+        lbl.pack(side=tk.LEFT)
         if isinstance(default_val, tk.StringVar):
             var = default_val
         else:
@@ -893,6 +970,11 @@ class SpkrScannerApp(tk.Tk):
         # Trigger update on focus out or enter
         entry.bind("<FocusOut>", self._schedule_update_stage5_preview)
         entry.bind("<Return>", self._schedule_update_stage5_preview)
+        
+        if help_text:
+            ToolTip(lbl, help_text)
+            ToolTip(entry, help_text)
+            
         return var
 
     def _add_checkbutton(self, parent, text, default_val, help_text=None):
@@ -1082,7 +1164,7 @@ class SpkrScannerApp(tk.Tk):
             
             # Auto-fill empty numerical fields with "0" to prevent float conversion crashes
             fields_to_zero = [
-                'cyl_radius', 'cyl_height', 'num_points', 'wall_thickness_mm',
+                'cyl_radius_mm', 'cyl_height_mm', 'num_points', 'wall_thickness_mm',
                 'bottom_cutoff_mm', 'P_side', 'P_caps', 'z_rotation_deg',
                 'phi_min_deg', 'phi_max_deg', 'azimuth_density_ratio',
                 'azimuth_weight_center_deg', 'delta_theta_deg'
@@ -1117,8 +1199,8 @@ class SpkrScannerApp(tk.Tk):
             tw_pos = get_wp_tuple('tw')
 
             gen_params = {
-                'cyl_radius': float(self.grid_vars['cyl_radius'].get()),
-                'cyl_height': float(self.grid_vars['cyl_height'].get()),
+                'cyl_radius_mm': float(self.grid_vars['cyl_radius_mm'].get()),
+                'cyl_height_mm': float(self.grid_vars['cyl_height_mm'].get()),
                 'num_points': int(self.grid_vars['num_points'].get()),
                 'wall_thickness_mm': float(self.grid_vars['wall_thickness_mm'].get()),
                 'bottom_cutoff_mm': float(self.grid_vars['bottom_cutoff_mm'].get()),
@@ -1609,7 +1691,8 @@ class SpkrScannerApp(tk.Tk):
                         print("\nOpening Validation UI...")
                         from viewers import ValidationUI
                         import matplotlib.pyplot as plt
-                        self.stage2_ui_instance = ValidationUI(sweep_results, f_all, keys, d_dict, geom, cfg)
+                        save_path = os.path.splitext(os.path.join(input_dir, output_filename))[0] + "_origins.png"
+                        self.stage2_ui_instance = ValidationUI(sweep_results, f_all, keys, d_dict, geom, cfg, save_path=save_path)
                         
                         def wait_for_ui():
                             if plt.fignum_exists(self.stage2_ui_instance.view.fig.number):
@@ -1951,7 +2034,7 @@ class SpkrScannerApp(tk.Tk):
             
             def launch_plotter():
                 if results:
-                    save_prefix = os.path.join(output_dir, f"{self.project_name.get()}_coefficients")
+                    save_prefix = os.path.join(input_dir, f"{self.project_name.get()}_coefficients")
                     she_dict = {
                         "freqs": results["freqs"],
                         "coeffs": results["coeffs"],
@@ -2001,15 +2084,15 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_vars['output_dir'] = tk.StringVar(value="outputs/response_files")
         ttk.Entry(out_dir_frame, textvariable=self.stage5_vars['output_dir']).grid(row=0, column=1, sticky=tk.EW, padx=5)
         ttk.Button(out_dir_frame, text="Browse", command=self._browse_stage5_output_dir).grid(row=0, column=2)
-        ToolTip(out_dir_frame, "Directory to save the output FRD/WAV files.")
+        if GUI_TOOLTIPS.get('output_dir'): ToolTip(out_dir_frame, GUI_TOOLTIPS['output_dir'])
 
-        self.stage5_vars['frd_prefix'] = self._add_form_entry(main_settings_frame, "FRD Prefix:", self.project_name.get(), "Base name for exported files. Defaults to project name.")
+        self.stage5_vars['frd_prefix'] = self._add_form_entry(main_settings_frame, "FRD Prefix:", self.project_name.get(), GUI_TOOLTIPS.get('frd_prefix'))
         self.project_name.trace_add("write", lambda *args: self.stage5_vars['frd_prefix'].set(self.project_name.get()))
 
         check_frame = ttk.Frame(main_settings_frame)
         check_frame.pack(fill=tk.X, pady=5)
-        self.stage5_vars['subtract_tof'] = self._add_checkbutton(check_frame, "Subtract Time-of-Flight Phase", True, "Subtract TOF phase to reduce FRD phase wrapping.")
-        self.stage5_vars['generate_ir_files'] = self._add_checkbutton(check_frame, "Generate IR Files (.wav)", False, "Generate .wav impulse responses from complex pressures.")
+        self.stage5_vars['subtract_tof'] = self._add_checkbutton(check_frame, "Subtract Time-of-Flight Phase", True, GUI_TOOLTIPS.get('subtract_tof'))
+        self.stage5_vars['generate_ir_files'] = self._add_checkbutton(check_frame, "Generate IR Files (.wav)", False, GUI_TOOLTIPS.get('generate_ir_files'))
 
         # --- Microphone Calibration ---
         mic_cal_frame = ttk.LabelFrame(main_container, text="Microphone Calibration", padding="10")
@@ -2028,7 +2111,7 @@ class SpkrScannerApp(tk.Tk):
         
         chk_frame = ttk.Frame(cal_top_frame)
         chk_frame.pack(side=tk.LEFT, fill=tk.X)
-        self.stage5_vars['apply_mic_cal'] = self._add_checkbutton(chk_frame, "Apply Microphone Calibration", False, "Apply FRD mic calibration curve to the output.")
+        self.stage5_vars['apply_mic_cal'] = self._add_checkbutton(chk_frame, "Apply Microphone Calibration", False, GUI_TOOLTIPS.get('apply_mic_cal'))
         
         combo_frame = ttk.Frame(cal_top_frame)
         combo_frame.pack(side=tk.LEFT, fill=tk.X)
@@ -2036,7 +2119,7 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_vars['mic_cal_mode'] = tk.StringVar(value="subtract")
         cb_mode = ttk.Combobox(combo_frame, textvariable=self.stage5_vars['mic_cal_mode'], values=["subtract", "add"], state="readonly", width=10)
         cb_mode.pack(side=tk.LEFT)
-        ToolTip(cb_mode, "Mode to apply the calibration.")
+        if GUI_TOOLTIPS.get('mic_cal_mode'): ToolTip(cb_mode, GUI_TOOLTIPS['mic_cal_mode'])
 
         # --- Reference Axis ---
         ref_axis_frame = ttk.LabelFrame(main_container, text="Reference Axis", padding="10")
@@ -2045,15 +2128,15 @@ class SpkrScannerApp(tk.Tk):
         offset_frame = ttk.Frame(ref_axis_frame)
         offset_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
         ttk.Label(offset_frame, text="Mic Offset (m):").pack(side=tk.LEFT, padx=(0, 10))
-        self.stage5_vars['offset_mic_x'] = self._add_labeled_entry(offset_frame, "X:", "0.0", 5)
-        self.stage5_vars['offset_mic_y'] = self._add_labeled_entry(offset_frame, "Y:", "0.0", 5)
-        self.stage5_vars['offset_mic_z'] = self._add_labeled_entry(offset_frame, "Z:", "0.0", 5)
+        self.stage5_vars['offset_mic_x'] = self._add_labeled_entry(offset_frame, "X:", "0.0", 5, GUI_TOOLTIPS.get('offset_mic_x'))
+        self.stage5_vars['offset_mic_y'] = self._add_labeled_entry(offset_frame, "Y:", "0.0", 5, GUI_TOOLTIPS.get('offset_mic_y'))
+        self.stage5_vars['offset_mic_z'] = self._add_labeled_entry(offset_frame, "Z:", "0.0", 5, GUI_TOOLTIPS.get('offset_mic_z'))
 
         zero_angle_frame = ttk.Frame(ref_axis_frame)
         zero_angle_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
         ttk.Label(zero_angle_frame, text="Zero Angle (deg):").pack(side=tk.LEFT, padx=(0, 10))
-        self.stage5_vars['zero_theta_deg'] = self._add_labeled_entry(zero_angle_frame, "Theta:", "90.0", 5)
-        self.stage5_vars['zero_phi_deg'] = self._add_labeled_entry(zero_angle_frame, "Phi:", "0.0", 5)
+        self.stage5_vars['zero_theta_deg'] = self._add_labeled_entry(zero_angle_frame, "Theta:", "90.0", 5, GUI_TOOLTIPS.get('zero_theta_deg'))
+        self.stage5_vars['zero_phi_deg'] = self._add_labeled_entry(zero_angle_frame, "Phi:", "0.0", 5, GUI_TOOLTIPS.get('zero_phi_deg'))
 
         # --- Evaluation Mode ---
         eval_frame = ttk.LabelFrame(main_container, text="Evaluation Mode", padding="10")
@@ -2061,21 +2144,21 @@ class SpkrScannerApp(tk.Tk):
 
         self.stage5_dist_frame = ttk.Frame(eval_frame, padding=(0, 0, 0, 5))
         self.stage5_dist_frame.pack(side=tk.TOP, fill=tk.X)
-        self.stage5_vars['dist_mic'] = self._add_form_entry(self.stage5_dist_frame, "Distance (m):", "1.0", "Radius of measurement arc / CTA-2034 sphere (m).")
+        self.stage5_vars['dist_mic'] = self._add_form_entry(self.stage5_dist_frame, "Distance (m):", "1.0", GUI_TOOLTIPS.get('dist_mic'))
 
         # --- CTA-2034 Mode ---
         self.stage5_cta_frame = ttk.Frame(eval_frame, padding=(0, 5, 0, 5))
         self.stage5_cta_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
         ttk.Label(self.stage5_cta_frame, text="CTA-2034:", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        self.stage5_vars['cta_mode'] = self._add_checkbutton(self.stage5_cta_frame, "Generate CTA-2034 graphs", False, "Generate full CTA-2034-A metrics. Overrides Measurement Arc Sweep.")
+        self.stage5_vars['cta_mode'] = self._add_checkbutton(self.stage5_cta_frame, "Generate CTA-2034 graphs", False, GUI_TOOLTIPS.get('cta_mode'))
 
         # --- Arc Sweep Mode ---
         self.stage5_arc_frame = ttk.Frame(eval_frame, padding=(0, 5, 0, 5))
         self.stage5_arc_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
         ttk.Label(self.stage5_arc_frame, text="Measurement Arc Sweep:", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        self.stage5_vars['range_deg'] = self._add_form_entry(self.stage5_arc_frame, "Range (± deg):", "90", "Sweep ± range in degrees (e.g., 90 = ±90°).")
-        self.stage5_vars['increment_deg'] = self._add_form_entry(self.stage5_arc_frame, "Increment (deg):", "10", "Increment of sweep (°).")
-        self.stage5_vars['direction'] = self._add_combobox(self.stage5_arc_frame, "Sweep Direction:", ["horizontal", "vertical", "hor_vert"], "horizontal", "Sweep direction.")
+        self.stage5_vars['range_deg'] = self._add_form_entry(self.stage5_arc_frame, "Range (± deg):", "90", GUI_TOOLTIPS.get('range_deg'))
+        self.stage5_vars['increment_deg'] = self._add_form_entry(self.stage5_arc_frame, "Increment (deg):", "10", GUI_TOOLTIPS.get('increment_deg'))
+        self.stage5_vars['direction'] = self._add_combobox(self.stage5_arc_frame, "Sweep Direction:", ["horizontal", "vertical", "hor_vert"], "horizontal", GUI_TOOLTIPS.get('direction'))
 
         # --- Manual List Mode ---
         self.stage5_manual_frame = ttk.Frame(eval_frame, padding=(0, 5, 0, 5))
@@ -2088,7 +2171,7 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_vars['manual_list_mode'] = tk.BooleanVar(value=False)
         cb_manual = ttk.Checkbutton(manual_inner_frame, text="Use Manual Coordinate List", variable=self.stage5_vars['manual_list_mode'])
         cb_manual.pack(side=tk.LEFT, padx=(0,5))
-        ToolTip(cb_manual, "Use a custom list of coordinates. Overrides all other evaluation modes including reference axis offsets and rotations.")
+        if GUI_TOOLTIPS.get('manual_list_mode'): ToolTip(cb_manual, GUI_TOOLTIPS['manual_list_mode'])
         
         self.btn_stage5_edit_coords = ttk.Button(manual_inner_frame, text="Edit List", command=self._open_stage5_coord_table_editor, state=tk.DISABLED)
         self.btn_stage5_edit_coords.pack(side=tk.LEFT, padx=10)
@@ -2148,9 +2231,9 @@ class SpkrScannerApp(tk.Tk):
 
         self.stage5_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
         
-        self.stage5_vars['obs_mode'] = self._add_combobox(self.stage5_adv_frame, "Observation Mode:", ["Internal", "External", "Full"], "Internal", "Wavefront observation mode. Internal is standard anechoic output.")
-        self.stage5_vars['mic_cal_fade_octaves'] = self._add_form_entry(self.stage5_adv_frame, "Mic Cal Fade Octaves:", "1.0", "Octaves to fade out of band correction to zero.")
-        self.stage5_vars['use_optimized_origins'] = self._add_checkbutton(self.stage5_adv_frame, "Use Optimized Origins", True, "Use frequency-dependent optimized acoustic origins if available in the coefficient file.")
+        self.stage5_vars['obs_mode'] = self._add_combobox(self.stage5_adv_frame, "Observation Mode:", ["Internal", "External", "Full"], "Internal", GUI_TOOLTIPS.get('obs_mode'))
+        self.stage5_vars['mic_cal_fade_octaves'] = self._add_form_entry(self.stage5_adv_frame, "Mic Cal Fade Octaves:", "1.0", GUI_TOOLTIPS.get('mic_cal_fade_octaves'))
+        self.stage5_vars['use_optimized_origins'] = self._add_checkbutton(self.stage5_adv_frame, "Use Optimized Origins", True, GUI_TOOLTIPS.get('use_optimized_origins_stage5'))
 
         self.btn_stage5_run = ttk.Button(main_container, text="Run Stage 5", command=self._action_run_stage5)
         self.btn_stage5_run.pack(side=tk.TOP, pady=20)
@@ -2438,6 +2521,7 @@ def main():
     
     # Use a slightly nicer theme if available
     style = ttk.Style()
+    
     if "clam" in style.theme_names():
         style.theme_use("clam")
         
@@ -2445,6 +2529,9 @@ def main():
         style.map('TCombobox', fieldbackground=[('readonly', 'white'), ('disabled', '#e0e0e0')],
                   foreground=[('disabled', '#a0a0a0')])
         
+    # Make all LabelFrame titles bold (must be applied after the theme change)
+    style.configure('TLabelframe.Label', font=('Arial', 10, 'bold'))
+
     app.mainloop()
 
 

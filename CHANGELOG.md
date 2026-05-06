@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.3] - 2026-05-06
+
+Added: Completion timer for each processing stage.
+Added: Auto-saving of Stage 2 validation results image.
+Added: "Save View Image" button in Stage 5 for microphone position plots.
+Changed: Transitioned Cylinder Height, Cylinder Radius, and Bottom Cutoff grid settings to millimeters (mm) across the UI and processing scripts.
+Changed: Physical waypoints now override and auto-fill the numerical cylinder dimensions in the UI.
+
 ## [2.2.2] - 2026-05-05
 
 Fixed: Severe performance bottleneck on Linux during parallel processing (Thread Thrashing). How: Enforced single-threading for underlying C math libraries (OpenBLAS, MKL, OMP, etc.) before importing NumPy, preventing CPU oversubscription.

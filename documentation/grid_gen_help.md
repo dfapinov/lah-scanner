@@ -20,7 +20,7 @@ This script generates a CSV file containing the coordinates for every measuremen
 
 ## Grid Dimensions and Clearances
 
-* **Internal vs. External Bounds:** When configuring the grid, the specified `cyl_radius` and `cyl_height` represent the internal dimensions of the cylinder, allowing you to size the grid precisely around the physical dimensions of the DUT. You must ensure the internal dimensions clear any cables or accessories connected to the DUT. The absolute maximum external dimensions of the generated grid will be the specified height and radius plus the `wall_thickness_mm` (default 50mm). 
+* **Internal vs. External Bounds:** When configuring the grid, the specified `cyl_radius_mm` and `cyl_height_mm` represent the internal dimensions of the cylinder, allowing you to size the grid precisely around the physical dimensions of the DUT. You must ensure the internal dimensions clear any cables or accessories connected to the DUT. The absolute maximum external dimensions of the generated grid will be the specified height and radius plus the `wall_thickness_mm` (default 50mm). 
 
 * **Physical Waypoints:** Alternatively, you can define the grid bounds using physical robot waypoints (`top_crit_pos` and `bot_crit_pos`). This allows you to jog the robot arm around the DUT and pass its actual cylindrical coordinates directly to the generator.
   * **Top Critical Position:** A point above the DUT, far enough outward to safely clear all corners and protrusions during a 360-degree rotation. This sets the grid's maximum internal height (top) and internal radius.

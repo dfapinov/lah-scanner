@@ -15,6 +15,7 @@ CTA-2034-A Compliance Updates (Reviewer Feedback Implemented):
 from __future__ import annotations
 
 import multiprocessing
+import time
 from pathlib import Path
 import numpy as np
 from utils import spherical_to_cartesian, cartesian_to_spherical, apply_mic_calibration, write_wav
@@ -233,6 +234,8 @@ def run_cta2034_extraction(
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None, 
     obs_mode=None, mic_cal_fade_octaves=None, use_optimized_origins=True
 ):
+    start_time = time.time()
+
     import config_process
     coeff_path = coeff_path if coeff_path is not None else config_process.COEFF_PATH
     output_dir = Path(output_dir if output_dir is not None else config_process.OUTPUT_DIR)
@@ -308,6 +311,9 @@ def run_cta2034_extraction(
             
         print("Success. CTA-2034 generation complete.")
         
+    elapsed = time.time() - start_time
+    print(f"\nStage 5 processing completed in {elapsed:.2f} seconds.")
+
     return {"freqs": freqs, "metrics": metrics}
 
 # -------------------------------------------------
@@ -321,6 +327,8 @@ def run_sweep_extraction(
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None,
     mic_cal_fade_octaves=None, use_optimized_origins=True
 ):
+    start_time = time.time()
+
     import config_process
     coeff_path = coeff_path if coeff_path is not None else config_process.COEFF_PATH
     output_dir = Path(output_dir if output_dir is not None else config_process.OUTPUT_DIR)
@@ -516,6 +524,9 @@ def run_sweep_extraction(
             
         print(f"Success. Files written to {output_dir}")
         
+    elapsed = time.time() - start_time
+    print(f"\nStage 5 processing completed in {elapsed:.2f} seconds.")
+
     return {"freqs": freqs, "data": extracted_data}
 
 # -------------------------------------------------
@@ -527,6 +538,7 @@ def run_sweep_extraction(
 def main():
     try:
         import config_process
+        
         if getattr(config_process, 'CTA_MODE', False):
             run_cta2034_extraction()
         else:
