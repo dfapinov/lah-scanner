@@ -309,7 +309,12 @@ def run_cta2034_extraction(
 
     subtract_tof_val = subtract_tof if subtract_tof is not None else getattr(config_process, 'SUBTRACT_TOF', False)
     if subtract_tof_val:
-        tof_ref_dist = np.min(r_final)
+        # NOTE: Using `r_in` (the radius before cartesian mic offsets are applied) 
+        # ensures the TOF reference point shifts *with* the mic offset. For example, 
+        # if the mic offset aligns with a tweeter, the TOF is calculated back to that 
+        # offset point. Previously, this used `r_final` which always calculated TOF 
+        # back to the absolute 0,0,0 origin regardless of offset.
+        tof_ref_dist = np.min(r_in)
         print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m)")
         p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
     else:
@@ -441,7 +446,12 @@ def run_sweep_extraction(
 
     tof_ref_dist = None
     if subtract_tof:
-        r_acous = r_final
+        # NOTE: Using `r_in` (the radius before cartesian mic offsets are applied) 
+        # ensures the TOF reference point shifts *with* the mic offset. For example, 
+        # if the mic offset aligns with a tweeter, the TOF is calculated back to that 
+        # offset point. Previously, this used `r_final` which always calculated TOF 
+        # back to the absolute 0,0,0 origin regardless of offset.
+        r_acous = r_in
         tof_ref_dist = np.min(r_acous)
         print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m)")
     else:
@@ -457,6 +467,7 @@ def run_sweep_extraction(
     
     freqs = result_raw["freqs"]
     p_raw_all = result_raw["complex"] 
+    fs_val = result_raw.get("fs")
 
     apply_cal_val = apply_mic_cal if apply_mic_cal is not None else getattr(config_process, 'APPLY_MIC_CALIBRATION', False)
     if apply_cal_val:
@@ -476,6 +487,7 @@ def run_sweep_extraction(
     coords_log = []
     extracted_data = {}
     
+    # SHE data is capped at 24kHz, so IRs are strictly generated at standard rates
     target_fs = 44100 if freqs[-1] < 23000.0 else 48000
     
     for idx, (prefix, subdir) in enumerate(prefixes):
@@ -493,7 +505,8 @@ def run_sweep_extraction(
             
             ir_audio = complex_to_ir(
                 p_complex=p_raw,
-                freqs=freqs
+                freqs=freqs,
+                target_fs=target_fs
             )
             
             write_wav(

@@ -266,7 +266,8 @@ def fdwsmooth(
             np.savez(out_path, **{
                 schema.FREQS: freqs,
                 schema.COMPLEX_DATA: results_raw,
-                schema.META: meta
+                schema.META: meta,
+                schema.FS: fs_common
             })
             print(f"Saved RAW data to {out_path}")
             
@@ -276,7 +277,8 @@ def fdwsmooth(
                 np.savez(out_path_raw, **{
                     schema.FREQS: freqs,
                     schema.COMPLEX_DATA: results_raw,
-                    schema.META: meta
+                    schema.META: meta,
+                    schema.FS: fs_common
                 })
                 print(f"Saved RAW data to {out_path_raw}")
                 
@@ -285,7 +287,8 @@ def fdwsmooth(
                 np.savez(out_path_smooth, **{
                     schema.FREQS: freqs,
                     schema.COMPLEX_DATA: results_smooth,
-                    schema.META: meta
+                    schema.META: meta,
+                    schema.FS: fs_common
                 })
                 print(f"Saved SMOOTHED data to {out_path_smooth}")
                 
@@ -294,7 +297,8 @@ def fdwsmooth(
                 np.savez(out_path, **{
                     schema.FREQS: freqs,
                     schema.COMPLEX_DATA: results_smooth,
-                    schema.META: meta
+                    schema.META: meta,
+                    schema.FS: fs_common
                 })
                 print(f"Saved SMOOTHED data to {out_path} (Raw discarded)")
     

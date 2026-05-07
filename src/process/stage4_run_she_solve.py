@@ -209,6 +209,7 @@ def run_she_solve(
     r_static = parsed_data['r_arr']
     th_static = parsed_data['th_arr']
     ph_static = parsed_data['ph_arr']
+    fs_common = parsed_data.get('fs')
     
     # 2. Optimized Origin Loading
     origins_mm = np.zeros((len(f_all), 3))
@@ -269,6 +270,8 @@ def run_she_solve(
             h[schema.COND] = res_cond
             h[schema.ORIGINS_MM] = origins_sel_mm # Saved so reconstruction scripts can extract and shift observation coords
             h[schema.PCT_ERROR] = pct_error
+            if fs_common is not None:
+                h[schema.FS] = fs_common
             
         logging.info(f"Complete. Results saved to {output_h5}")
 

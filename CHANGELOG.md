@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.2.5] - 2026-05-07
+
+Added: Phase compensation in `extract_pressures_core.py` for the 5-sample padding introduced during upstream IR generation (`audio.py "split_idx = len(inv_data) - 5"). The input IR sample rate is now passed through the pipeline to enable precise 5-sample phase rotation.
+Changed: The phase reference for measurements when "Subtract Time of Flight" is enabled now dynamically tracks the `mic_offset` values. This allows setting the phase reference at positions other than the origin of the measurement grid (e.g., if the tweeter is offset forward and above the origin). This change is also reflected visually as the origin point of the red reference axis in the Stage 5 GUI plots.
+
 ## [2.2.4] - 2026-05-07
 
 Changed: FRD file name convention for better VituixCAD compatability.

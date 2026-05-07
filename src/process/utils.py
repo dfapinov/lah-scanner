@@ -107,6 +107,7 @@ def load_and_parse_npz(filepath: Union[str, Path]) -> Dict:
         'th_arr': np.array(th_list),
         'ph_arr': np.array(ph_list),
         'origins_mm': loaded[schema.ORIGINS_MM] if schema.ORIGINS_MM in loaded else None,
+        'fs': loaded[schema.FS].item() if schema.FS in loaded else None,
         'raw_data': loaded
     }
 
@@ -118,11 +119,13 @@ def load_she_h5(source: Union[str, Path, Dict[str, np.ndarray]]) -> Dict[str, np
             raise FileNotFoundError(f"Coefficient file not found: {path}")
         with h5py.File(path, "r") as h:
             origins_mm = h.get(schema.ORIGINS_MM)
+            fs_val = h.get(schema.FS)
             return {
                 schema.FREQS: h[schema.FREQS][()],
                 schema.COEFFS: h[schema.COEFFS][()],
                 schema.N_USED: h[schema.N_USED][()].astype(int),
-                schema.ORIGINS_MM: origins_mm[()] if origins_mm is not None else None 
+                schema.ORIGINS_MM: origins_mm[()] if origins_mm is not None else None,
+                schema.FS: fs_val[()] if fs_val is not None else None
             }
     elif isinstance(source, dict):
         return source
@@ -329,4 +332,3 @@ def apply_mic_calibration(complex_data: np.ndarray, target_freqs: np.ndarray, ca
     # handling both 1D arrays (e.g., individual IRs) and 2D matrices (e.g., arc sweeps)
     # before returning the array to its original shape.
     return (complex_data.T * cal_mult).T
-

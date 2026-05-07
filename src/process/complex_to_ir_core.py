@@ -12,7 +12,8 @@ from scipy.fft import next_fast_len
 
 def complex_to_ir(
     p_complex: np.ndarray,
-    freqs: np.ndarray
+    freqs: np.ndarray,
+    target_fs: int = None
 ) -> np.ndarray:
     """
     Converts complex pressure data into a time-domain impulse response.
@@ -20,12 +21,13 @@ def complex_to_ir(
     Args:
         p_complex: 1D array of complex pressure values.
         freqs: 1D array of corresponding frequencies.
+        target_fs: Optional target sample rate. If None, auto-detects.
 
     Returns:
         A 1D NumPy array containing the real-valued impulse response.
     """
-    # Auto-detect target sample rate based on the highest available frequency bin
-    target_fs = 44100 if freqs[-1] < 23000.0 else 48000
+    if target_fs is None:
+        target_fs = 44100 if freqs[-1] < 23000.0 else 48000
 
     # 1. Determine original and target FFT lengths using frequency resolution
     df = freqs[1] - freqs[0] if len(freqs) > 1 else 1.0

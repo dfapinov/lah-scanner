@@ -109,6 +109,7 @@ def evaluate_she_field(
     freqs = data[schema.FREQS]
     coeffs = data[schema.COEFFS]
     n_used = data[schema.N_USED]
+    fs_val = data.get(schema.FS)
 
     # Fallback if processing older files without origins
     if not use_optimized_origins:
@@ -157,6 +158,27 @@ def evaluate_she_field(
             
     print("\nCalculation complete.")
 
+    # -------------------------------------------------
+    # Artificial Padding Phase Correction
+    # -------------------------------------------------
+    # audio.py splits the linear IR from the full Farina IR at the mid-point 
+    # minus 5 samples (`split_idx = len(inv_data) - 5`) to avoid cutting off 
+    # the start of the IR. This introduces a 5-sample artificial delay into 
+    # the entire system. We mathematically remove this delay here by applying 
+    # a phase advance, ensuring all extracted responses (FRD and WAV) retain 
+    # only their true physical time-of-flight.
+    pad_samples = 5
+    if fs_val is not None:
+        fs_target = float(fs_val)
+    else:
+        fs_target = 44100.0 if freqs[-1] < 23000.0 else 48000.0
+    time_advance = pad_samples / fs_target
+    phase_correction = np.exp(1j * 2.0 * np.pi * freqs * time_advance)
+    
+    print(f"Applying artificial padding phase correction (-{pad_samples} samples at {fs_target:.0f} Hz)...")
+    pressures_all *= phase_correction[:, np.newaxis]
+    # -------------------------------------------------
+
     eps = np.finfo(float).eps
     mags_db = 20 * np.log10(np.abs(pressures_all) + eps)
     phase_deg = np.angle(pressures_all, deg=True)
@@ -165,5 +187,6 @@ def evaluate_she_field(
         "freqs": freqs,
         "complex": pressures_all,
         "magnitude": mags_db,
-        "phase": phase_deg
+        "phase": phase_deg,
+        "fs": fs_val
     }
