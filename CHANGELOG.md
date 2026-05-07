@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.4] - 2026-05-07
+
+Changed: FRD file prefix to FRD suffix for better VituixCAD compatability.
+Changed: Seperate Horizontal and Vertical response file output directories replaced with a single directory named after the project title. Why: VituixCAD only opens response files from a single directory.
+Fixed: GUI did not pass use_coord_list to stage 5 when using sweep mode, resulting in variable pulls from config_process.py and unpredictable TOF subtrasction.
+Fixed: CTA-2034 export mode did not support the 'Subtract Time of Flight' setting, resulting in the exported On-Axis phase including the full TOF delay. How: Added the subtract_tof argument to the CTA-2034 extraction function. Extracted the TOF phase rotation math into a shared helper function and applied it to the CTA-2034 data.
+
 ## [2.2.3] - 2026-05-06
 
 Added: Completion timer for each processing stage.

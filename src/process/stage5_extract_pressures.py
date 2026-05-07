@@ -24,6 +24,14 @@ from extract_pressures_core import evaluate_she_field
 from complex_to_ir_core import complex_to_ir
 
 # -------------------------------------------------
+# Shared Helpers
+# -------------------------------------------------
+
+def get_tof_phasor(freqs, dist_m, c_sound):
+    """Calculates the complex phase rotation array needed to subtract time-of-flight."""
+    return np.exp(1j * 2.0 * np.pi * freqs * (dist_m / c_sound))
+
+# -------------------------------------------------
 # CTA-2034 Helpers
 # -------------------------------------------------
 
@@ -232,7 +240,8 @@ def run_cta2034_extraction(
     coeff_path=None, output_dir=None, dist_mic=None,
     zero_theta=None, zero_phi=None, offset_xyz=None, c_sound=None, save_to_disk=True,
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None, 
-    obs_mode=None, mic_cal_fade_octaves=None, use_optimized_origins=True
+    obs_mode=None, mic_cal_fade_octaves=None, use_optimized_origins=True,
+    subtract_tof=None
 ):
     start_time = time.time()
 
@@ -298,6 +307,14 @@ def run_cta2034_extraction(
         print(f"Applying mic calibration: {cal_file} (Mode: {cal_mode}, Fade: {fade_oct} oct)")
         p_raw_all = apply_mic_calibration(p_raw_all, freqs, cal_file, cal_mode, fade_oct)
 
+    subtract_tof_val = subtract_tof if subtract_tof is not None else getattr(config_process, 'SUBTRACT_TOF', False)
+    if subtract_tof_val:
+        tof_ref_dist = np.min(r_final)
+        print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m)")
+        p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
+    else:
+        print("TOF subtraction: OFF")
+
     print("Computing Spinorama metrics...")
     metrics = calculate_cta2034_metrics(freqs, p_raw_all, map_indices, coord_deviations)
     
@@ -347,6 +364,7 @@ def run_sweep_extraction(
     c_sound = c_sound if c_sound is not None else config_process.SPEED_OF_SOUND
     gen_ir = generate_ir_files if generate_ir_files is not None else getattr(config_process, 'GENERATE_IR_FILES', False)
 
+    output_dir = output_dir / frd_prefix
     complex_dir = output_dir / "complex"
     ir_dir = output_dir / "ir"
     if save_to_disk:
@@ -354,18 +372,6 @@ def run_sweep_extraction(
         complex_dir.mkdir(parents=True, exist_ok=True)
         if gen_ir:
             ir_dir.mkdir(parents=True, exist_ok=True)
-        
-        if not use_coord_list:
-            if direction.lower() in ("horizontal", "hor_vert"):
-                (output_dir / "horizontal").mkdir(parents=True, exist_ok=True)
-                (complex_dir / "horizontal").mkdir(parents=True, exist_ok=True)
-                if gen_ir:
-                    (ir_dir / "horizontal").mkdir(parents=True, exist_ok=True)
-            if direction.lower() in ("vertical", "hor_vert"):
-                (output_dir / "vertical").mkdir(parents=True, exist_ok=True)
-                (complex_dir / "vertical").mkdir(parents=True, exist_ok=True)
-                if gen_ir:
-                    (ir_dir / "vertical").mkdir(parents=True, exist_ok=True)
 
     coords_spherical = []
     prefixes = []
@@ -385,7 +391,7 @@ def run_sweep_extraction(
                 th, ph, r = entry
             coords_spherical.append((th, ph, r))
             r_str = f"{int(round(r*1000))}mm"
-            prefixes.append((f"th{th}_ph{ph}_{r_str}", ""))
+            prefixes.append((f"{frd_prefix}_{r_str}_th{th}_ph{ph}", ""))
     else:
         rng = int(range_deg); inc = int(increment_deg)
         
@@ -412,14 +418,14 @@ def run_sweep_extraction(
                 p_global = rot_matrix @ p_local
                 r_s, th_s, ph_s = cartesian_to_spherical(p_global[0], p_global[1], p_global[2])
                 coords_spherical.append((np.degrees(th_s), np.degrees(ph_s), r_s))
-                prefixes.append((f"{frd_prefix}_hor{val_str}_{int(default_r*1000)}mm", "horizontal"))
+                prefixes.append((f"{frd_prefix}_{int(default_r*1000)}mm_hor{val_str}", ""))
             if direction.lower() in ("vertical", "hor_vert"):
                 if direction.lower() == "hor_vert" and ang_deg == 0: continue
                 p_local = np.array([default_r * np.cos(ang_rad), 0, default_r * np.sin(ang_rad)])
                 p_global = rot_matrix @ p_local
                 r_s, th_s, ph_s = cartesian_to_spherical(p_global[0], p_global[1], p_global[2])
                 coords_spherical.append((np.degrees(th_s), np.degrees(ph_s), r_s))
-                prefixes.append((f"{frd_prefix}_ver{val_str}_{int(default_r*1000)}mm", "vertical"))
+                prefixes.append((f"{frd_prefix}_{int(default_r*1000)}mm_ver{val_str}", ""))
 
     # Apply static offsets here in stage5, unless in manual mode where coords are absolute
     pts_sph = np.array(coords_spherical, dtype=float)
@@ -460,6 +466,11 @@ def run_sweep_extraction(
         print(f"Applying mic calibration: {cal_file} (Mode: {cal_mode}, Fade: {fade_oct} oct)")
         p_raw_all = apply_mic_calibration(p_raw_all, freqs, cal_file, cal_mode, fade_oct)
 
+    if subtract_tof and tof_ref_dist is not None:
+        tof_phasor = get_tof_phasor(freqs, tof_ref_dist, c_sound)
+    else:
+        tof_phasor = None
+
     if save_to_disk:
         print("Writing files...")
     coords_log = []
@@ -473,9 +484,8 @@ def run_sweep_extraction(
         coords_log.append(f"{prefix}    {th_in:.2f}    {ph_in:.2f}    {r_in:.6f}")
 
         p_frd = p_raw.copy()
-        if subtract_tof and tof_ref_dist is not None:
-            t_delay = tof_ref_dist / c_sound
-            p_frd *= np.exp(1j * 2.0 * np.pi * freqs * t_delay)
+        if tof_phasor is not None:
+            p_frd *= tof_phasor
 
         # --- IR Generation ---
         if save_to_disk and gen_ir:
