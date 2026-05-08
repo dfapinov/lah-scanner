@@ -78,7 +78,8 @@ def compute_spatial_error_data(she_dict, p_measured_all, coords_sph, c_sound=343
         she_input=sub_she_dict,
         obs_mode="Full",
         c_sound=c_sound,
-        use_optimized_origins=True
+        use_optimized_origins=True,
+        corr_ir_pad_phase=False
     )
     
     sub_p_reconstructed = reconstruction_result["complex"]

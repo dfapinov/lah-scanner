@@ -102,7 +102,8 @@ def evaluate_she_field(
     she_input: Union[str, Path, Dict],
     obs_mode: str = "Internal",
     c_sound: float = 343.0,
-    use_optimized_origins: bool = True
+    use_optimized_origins: bool = True,
+    corr_ir_pad_phase: bool = True
 ) -> Dict[str, np.ndarray]:
     
     data = load_she_h5(she_input)
@@ -167,16 +168,17 @@ def evaluate_she_field(
     # the entire system. We mathematically remove this delay here by applying 
     # a phase advance, ensuring all extracted responses (FRD and WAV) retain 
     # only their true physical time-of-flight.
-    pad_samples = 5
-    if fs_val is not None:
-        fs_target = float(fs_val)
-    else:
-        fs_target = 44100.0 if freqs[-1] < 23000.0 else 48000.0
-    time_advance = pad_samples / fs_target
-    phase_correction = np.exp(1j * 2.0 * np.pi * freqs * time_advance)
-    
-    print(f"Applying artificial padding phase correction (-{pad_samples} samples at {fs_target:.0f} Hz)...")
-    pressures_all *= phase_correction[:, np.newaxis]
+    if corr_ir_pad_phase:
+        pad_samples = 5
+        if fs_val is not None:
+            fs_target = float(fs_val)
+        else:
+            fs_target = 44100.0 if freqs[-1] < 23000.0 else 48000.0
+        time_advance = pad_samples / fs_target
+        phase_correction = np.exp(1j * 2.0 * np.pi * freqs * time_advance)
+        
+        print(f"Applying artificial padding phase correction (-{pad_samples} samples at {fs_target:.0f} Hz)...")
+        pressures_all *= phase_correction[:, np.newaxis]
     # -------------------------------------------------
 
     eps = np.finfo(float).eps
