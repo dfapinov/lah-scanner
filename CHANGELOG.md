@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.6] - 2026-05-08
+
+Removed: Redundant 'target_fs' argument from complex_to_ir_core.py Why: AI added it in previous version without developers intent.
+Added: FRD DB Offset. This feature scales the magnitude level of the exported FRD files to allow SPL calibration. It does not affect exported impulse response wavs.
+Added: Microphone calibration files are saved to the project.jason file as a fall-back in case the original file is missing.
+
+
 ## [2.2.5] - 2026-05-07
 
 Added: Phase compensation in `extract_pressures_core.py` for the 5-sample padding introduced during upstream IR generation (`audio.py "split_idx = len(inv_data) - 5"). The input IR sample rate is now passed through the pipeline to enable precise 5-sample phase rotation.

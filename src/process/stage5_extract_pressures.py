@@ -241,7 +241,7 @@ def run_cta2034_extraction(
     zero_theta=None, zero_phi=None, offset_xyz=None, c_sound=None, save_to_disk=True,
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None, 
     obs_mode=None, mic_cal_fade_octaves=None, use_optimized_origins=True,
-    subtract_tof=None
+    subtract_tof=None, frd_db_offset=None
 ):
     start_time = time.time()
 
@@ -307,6 +307,8 @@ def run_cta2034_extraction(
         print(f"Applying mic calibration: {cal_file} (Mode: {cal_mode}, Fade: {fade_oct} oct)")
         p_raw_all = apply_mic_calibration(p_raw_all, freqs, cal_file, cal_mode, fade_oct)
 
+    frd_offset_val = float(frd_db_offset) if frd_db_offset is not None else getattr(config_process, 'FRD_DB_OFFSET', 0.0)
+
     subtract_tof_val = subtract_tof if subtract_tof is not None else getattr(config_process, 'SUBTRACT_TOF', False)
     if subtract_tof_val:
         # NOTE: Using `r_in` (the radius before cartesian mic offsets are applied) 
@@ -326,6 +328,8 @@ def run_cta2034_extraction(
     if save_to_disk:
         print(f"Writing files to {cta_dir}...")
         for name, (mag, phase) in metrics.items():
+            if frd_offset_val != 0.0:
+                mag = mag + frd_offset_val
             fpath = cta_dir / f"{name}.frd"
             if "/" in name:
                 fpath = cta_dir / f"{name.split('/')[0]}" / f"{name.split('/')[1]}.frd"
@@ -347,7 +351,7 @@ def run_sweep_extraction(
     zero_phi=None, dist_mic=None, obs_mode=None, offset_xyz=None, subtract_tof=None,
     frd_prefix=None, c_sound=None, save_to_disk=True, generate_ir_files=None,
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None,
-    mic_cal_fade_octaves=None, use_optimized_origins=True
+    mic_cal_fade_octaves=None, use_optimized_origins=True, frd_db_offset=None
 ):
     start_time = time.time()
 
@@ -476,6 +480,8 @@ def run_sweep_extraction(
         fade_oct = float(mic_cal_fade_octaves) if mic_cal_fade_octaves is not None else getattr(config_process, 'MIC_CALIBRATION_FADE_OCTAVES', 1.0)
         print(f"Applying mic calibration: {cal_file} (Mode: {cal_mode}, Fade: {fade_oct} oct)")
         p_raw_all = apply_mic_calibration(p_raw_all, freqs, cal_file, cal_mode, fade_oct)
+        
+    frd_offset_val = float(frd_db_offset) if frd_db_offset is not None else getattr(config_process, 'FRD_DB_OFFSET', 0.0)
 
     if subtract_tof and tof_ref_dist is not None:
         tof_phasor = get_tof_phasor(freqs, tof_ref_dist, c_sound)
@@ -505,8 +511,7 @@ def run_sweep_extraction(
             
             ir_audio = complex_to_ir(
                 p_complex=p_raw,
-                freqs=freqs,
-                target_fs=target_fs
+                freqs=freqs
             )
             
             write_wav(
@@ -518,6 +523,8 @@ def run_sweep_extraction(
 
         eps = np.finfo(float).eps
         mags = 20 * np.log10(np.abs(p_frd) + eps)
+        if frd_offset_val != 0.0:
+            mags += frd_offset_val
         phases = np.angle(p_frd, deg=True)
         
         extracted_data[prefix] = {

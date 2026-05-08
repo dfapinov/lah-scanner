@@ -124,6 +124,7 @@ USE_OPTIMIZED_ORIGINS = True # Essential for best fit.
 COEFF_PATH = "outputs/coefficients/she_coeffs.h5"  # High-frequency coefficients
 OUTPUT_DIR    = "outputs/response_files"                  # Output directory for FRD files and coordinates.txt
 FRD_PREFIX = "Response"   # base name for arc-sweep FRD file exports (e.g., "response", "speaker-1", etc.)
+FRD_DB_OFFSET = 0.0       # Scales the exported FRD dB levels (does not affect IR wav files).
 OBSERVATION_MODE = "Internal" # Wavefront observation mode (Internal = anechoic response. External = Room response, Full = both).
 GENERATE_IR_FILES = False # Set to True to generate .wav impulse responses from complex pressures
 SUBTRACT_TOF       = False         # Subtract time-of-flight (TOF) phase to reduce FRD phase wrapping.

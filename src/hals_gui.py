@@ -32,6 +32,7 @@ DEBUG_MODE = False # True / False
 GUI_TOOLTIPS = {
     'output_dir': "Directory where final extracted FRD and/or WAV files will be saved.",
     'frd_prefix': "Prefix added to the beginning of all extracted file names.",
+    'frd_db_offset': "Scales the exported FRD dB levels (does not affect IR wav files).",
     'subtract_tof': "Mathematically subtract the time-of-flight phase delay from the DUT origin to the mic. Aligns phase to t=0.",
     'generate_ir_files': "If checked, generates .wav impulse responses along with the standard frequency response (.frd) text files.",
     'apply_mic_cal': "Applies the selected microphone calibration file to the extracted results.",
@@ -1034,6 +1035,24 @@ class SpkrScannerApp(tk.Tk):
             except ValueError:
                 self.stage5_vars['mic_cal_file'].set(filepath)
 
+    def _check_mic_cal_status(self, *args):
+        if not hasattr(self, 'lbl_mic_cal_fallback'): return
+        cal_file = self.stage5_vars.get('mic_cal_file', tk.StringVar()).get()
+        if cal_file:
+            if os.path.isabs(cal_file):
+                full_path = cal_file
+            else:
+                full_path = os.path.join(self.project_dir.get(), cal_file)
+            if not os.path.exists(full_path):
+                if getattr(self, 'mic_cal_fallback_content', ""):
+                    self.lbl_mic_cal_fallback.config(text="File missing. Using project save fallback.", foreground="orange")
+                else:
+                    self.lbl_mic_cal_fallback.config(text="File missing. No fallback available.", foreground="red")
+            else:
+                self.lbl_mic_cal_fallback.config(text="")
+        else:
+            self.lbl_mic_cal_fallback.config(text="")
+
     def _action_save_project(self):
         if DEBUG_MODE:
             print("[DEBUG] Action: Save Project")
@@ -1051,6 +1070,22 @@ class SpkrScannerApp(tk.Tk):
             self._save_settings()
 
     def _save_settings(self):
+        stage5_vars = getattr(self, 'stage5_vars', {})
+        mic_cal_var = stage5_vars.get('mic_cal_file')
+        mic_cal_path = mic_cal_var.get() if mic_cal_var else ""
+        fallback_content = ""
+        if mic_cal_path:
+            if os.path.isabs(mic_cal_path):
+                full_path = mic_cal_path
+            else:
+                full_path = os.path.join(self.project_dir.get(), mic_cal_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, 'r') as cf:
+                        fallback_content = cf.read()
+                except Exception as e:
+                    print(f"Warning: Could not read mic cal file for fallback: {e}")
+
         settings = {
             "project_name": self.project_name.get(),
             "grid_vars": {k: v.get() for k, v in self.grid_vars.items()},
@@ -1059,7 +1094,8 @@ class SpkrScannerApp(tk.Tk):
             "stage3_vars": {k: v.get() for k, v in getattr(self, 'stage3_vars', {}).items()},
             "stage4_vars": {k: v.get() for k, v in getattr(self, 'stage4_vars', {}).items()},
             "stage5_vars": {k: v.get() for k, v in getattr(self, 'stage5_vars', {}).items()},
-            "stage4_manual_table": {str(k): v for k, v in getattr(self, 'stage4_manual_table', {}).items()}
+            "stage4_manual_table": {str(k): v for k, v in getattr(self, 'stage4_manual_table', {}).items()},
+            "mic_cal_fallback": fallback_content
         }
 
         if DEBUG_MODE and hasattr(self, 'debug_log_file') and self.debug_log_file:
@@ -1151,6 +1187,14 @@ class SpkrScannerApp(tk.Tk):
                     self.stage5_manual_coords = settings.get("stage5_vars", {}).get("manual_coord_list", [])
                 if "stage4_manual_table" in settings:
                     self.stage4_manual_table = {float(k): int(v) for k, v in settings["stage4_manual_table"].items()}
+
+                if "mic_cal_fallback" in settings:
+                    self.mic_cal_fallback_content = settings["mic_cal_fallback"]
+                else:
+                    self.mic_cal_fallback_content = ""
+                    
+                if hasattr(self, '_check_mic_cal_status'):
+                    self._check_mic_cal_status()
 
             except Exception as e:
                 print(f"Warning: Failed to load project settings: {e}")
@@ -2089,6 +2133,8 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_vars['frd_prefix'] = self._add_form_entry(main_settings_frame, "FRD Prefix:", self.project_name.get(), GUI_TOOLTIPS.get('frd_prefix'))
         self.project_name.trace_add("write", lambda *args: self.stage5_vars['frd_prefix'].set(self.project_name.get()))
 
+        self.stage5_vars['frd_db_offset'] = self._add_form_entry(main_settings_frame, "FRD dB Offset:", "0.0", GUI_TOOLTIPS.get('frd_db_offset'))
+
         check_frame = ttk.Frame(main_settings_frame)
         check_frame.pack(fill=tk.X, pady=5)
         self.stage5_vars['subtract_tof'] = self._add_checkbutton(check_frame, "Subtract Time-of-Flight Phase", True, GUI_TOOLTIPS.get('subtract_tof'))
@@ -2120,6 +2166,10 @@ class SpkrScannerApp(tk.Tk):
         cb_mode = ttk.Combobox(combo_frame, textvariable=self.stage5_vars['mic_cal_mode'], values=["subtract", "add"], state="readonly", width=10)
         cb_mode.pack(side=tk.LEFT)
         if GUI_TOOLTIPS.get('mic_cal_mode'): ToolTip(cb_mode, GUI_TOOLTIPS['mic_cal_mode'])
+
+        self.lbl_mic_cal_fallback = ttk.Label(combo_frame, text="")
+        self.lbl_mic_cal_fallback.pack(side=tk.LEFT, padx=(10, 0))
+        self.stage5_vars['mic_cal_file'].trace_add("write", self._check_mic_cal_status)
 
         # --- Reference Axis ---
         ref_axis_frame = ttk.LabelFrame(main_container, text="Reference Axis", padding="10")
@@ -2459,21 +2509,49 @@ class SpkrScannerApp(tk.Tk):
             offset_xyz = (float(self.stage5_vars['offset_mic_x'].get()), float(self.stage5_vars['offset_mic_y'].get()), float(self.stage5_vars['offset_mic_z'].get()))
             
             apply_mic_cal = self.stage5_vars['apply_mic_cal'].get()
-            mic_cal_file = os.path.join(proj_dir, self.stage5_vars['mic_cal_file'].get()) if self.stage5_vars['mic_cal_file'].get() else ""
+            mic_cal_file = ""
+            if apply_mic_cal:
+                cal_rel_path = self.stage5_vars['mic_cal_file'].get()
+                if cal_rel_path:
+                    if os.path.isabs(cal_rel_path):
+                        full_path = cal_rel_path
+                    else:
+                        full_path = os.path.join(proj_dir, cal_rel_path)
+                        
+                    if not os.path.exists(full_path):
+                        fallback_content = getattr(self, 'mic_cal_fallback_content', "")
+                        if fallback_content:
+                            fallback_path = os.path.join(proj_dir, "fallback_mic_cal.txt")
+                            try:
+                                with open(fallback_path, "w") as f:
+                                    f.write(fallback_content)
+                                mic_cal_file = fallback_path
+                                print(f"Original mic cal file not found. Using fallback data from project save.")
+                            except Exception as e:
+                                print(f"Error writing fallback mic cal file: {e}")
+                                mic_cal_file = full_path
+                        else:
+                            print(f"Warning: Mic cal file not found and no fallback data available.")
+                            mic_cal_file = full_path
+                    else:
+                        mic_cal_file = full_path
+                        
             mic_cal_mode = self.stage5_vars['mic_cal_mode'].get()
 
             obs_mode = self.stage5_vars['obs_mode'].get()
             mic_cal_fade_octaves = float(self.stage5_vars['mic_cal_fade_octaves'].get())
             use_optimized_origins = self.stage5_vars['use_optimized_origins'].get()
+            
+            frd_db_offset = float(self.stage5_vars.get('frd_db_offset', tk.StringVar(value="0.0")).get())
 
             if self.stage5_vars['manual_list_mode'].get():
                 manual_coords = getattr(self, 'stage5_manual_coords', [])
                 if not manual_coords: raise ValueError("Manual Coordinate List mode is active, but the list is empty.")
-                run_sweep_extraction(coeff_path=coeff_path, output_dir=output_dir_abs, use_coord_list=True, coord_list=manual_coords, zero_theta=float(self.stage5_vars['zero_theta_deg'].get()), zero_phi=float(self.stage5_vars['zero_phi_deg'].get()), dist_mic=float(self.stage5_vars['dist_mic'].get()), offset_xyz=offset_xyz, subtract_tof=self.stage5_vars['subtract_tof'].get(), frd_prefix=self.stage5_vars['frd_prefix'].get(), generate_ir_files=self.stage5_vars['generate_ir_files'].get(), apply_mic_cal=apply_mic_cal, mic_cal_file=mic_cal_file, mic_cal_mode=mic_cal_mode, obs_mode=obs_mode, mic_cal_fade_octaves=mic_cal_fade_octaves, use_optimized_origins=use_optimized_origins)
+                run_sweep_extraction(coeff_path=coeff_path, output_dir=output_dir_abs, use_coord_list=True, coord_list=manual_coords, zero_theta=float(self.stage5_vars['zero_theta_deg'].get()), zero_phi=float(self.stage5_vars['zero_phi_deg'].get()), dist_mic=float(self.stage5_vars['dist_mic'].get()), offset_xyz=offset_xyz, subtract_tof=self.stage5_vars['subtract_tof'].get(), frd_prefix=self.stage5_vars['frd_prefix'].get(), generate_ir_files=self.stage5_vars['generate_ir_files'].get(), apply_mic_cal=apply_mic_cal, mic_cal_file=mic_cal_file, mic_cal_mode=mic_cal_mode, obs_mode=obs_mode, mic_cal_fade_octaves=mic_cal_fade_octaves, use_optimized_origins=use_optimized_origins, frd_db_offset=frd_db_offset)
             elif self.stage5_vars['cta_mode'].get():
-                run_cta2034_extraction(coeff_path=coeff_path, output_dir=output_dir_abs, dist_mic=float(self.stage5_vars['dist_mic'].get()), zero_theta=float(self.stage5_vars['zero_theta_deg'].get()), zero_phi=float(self.stage5_vars['zero_phi_deg'].get()), offset_xyz=offset_xyz, apply_mic_cal=apply_mic_cal, mic_cal_file=mic_cal_file, mic_cal_mode=mic_cal_mode, obs_mode=obs_mode, mic_cal_fade_octaves=mic_cal_fade_octaves, use_optimized_origins=use_optimized_origins, subtract_tof=self.stage5_vars['subtract_tof'].get())
+                run_cta2034_extraction(coeff_path=coeff_path, output_dir=output_dir_abs, dist_mic=float(self.stage5_vars['dist_mic'].get()), zero_theta=float(self.stage5_vars['zero_theta_deg'].get()), zero_phi=float(self.stage5_vars['zero_phi_deg'].get()), offset_xyz=offset_xyz, apply_mic_cal=apply_mic_cal, mic_cal_file=mic_cal_file, mic_cal_mode=mic_cal_mode, obs_mode=obs_mode, mic_cal_fade_octaves=mic_cal_fade_octaves, use_optimized_origins=use_optimized_origins, subtract_tof=self.stage5_vars['subtract_tof'].get(), frd_db_offset=frd_db_offset)
             else:
-                run_sweep_extraction(coeff_path=coeff_path, output_dir=output_dir_abs, use_coord_list=False, direction=self.stage5_vars['direction'].get(), range_deg=int(self.stage5_vars['range_deg'].get()), increment_deg=int(self.stage5_vars['increment_deg'].get()), zero_theta=float(self.stage5_vars['zero_theta_deg'].get()), zero_phi=float(self.stage5_vars['zero_phi_deg'].get()), dist_mic=float(self.stage5_vars['dist_mic'].get()), offset_xyz=offset_xyz, subtract_tof=self.stage5_vars['subtract_tof'].get(), frd_prefix=self.stage5_vars['frd_prefix'].get(), generate_ir_files=self.stage5_vars['generate_ir_files'].get(), apply_mic_cal=apply_mic_cal, mic_cal_file=mic_cal_file, mic_cal_mode=mic_cal_mode, obs_mode=obs_mode, mic_cal_fade_octaves=mic_cal_fade_octaves, use_optimized_origins=use_optimized_origins)
+                run_sweep_extraction(coeff_path=coeff_path, output_dir=output_dir_abs, use_coord_list=False, direction=self.stage5_vars['direction'].get(), range_deg=int(self.stage5_vars['range_deg'].get()), increment_deg=int(self.stage5_vars['increment_deg'].get()), zero_theta=float(self.stage5_vars['zero_theta_deg'].get()), zero_phi=float(self.stage5_vars['zero_phi_deg'].get()), dist_mic=float(self.stage5_vars['dist_mic'].get()), offset_xyz=offset_xyz, subtract_tof=self.stage5_vars['subtract_tof'].get(), frd_prefix=self.stage5_vars['frd_prefix'].get(), generate_ir_files=self.stage5_vars['generate_ir_files'].get(), apply_mic_cal=apply_mic_cal, mic_cal_file=mic_cal_file, mic_cal_mode=mic_cal_mode, obs_mode=obs_mode, mic_cal_fade_octaves=mic_cal_fade_octaves, use_optimized_origins=use_optimized_origins, frd_db_offset=frd_db_offset)
             
             print("Stage 5 completed successfully.")
         except Exception as e:
