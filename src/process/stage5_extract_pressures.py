@@ -298,6 +298,7 @@ def run_cta2034_extraction(
     
     freqs = result_raw["freqs"]
     p_raw_all = result_raw["complex"] 
+    fs_val = result_raw.get("fs")
     
     apply_cal_val = apply_mic_cal if apply_mic_cal is not None else getattr(config_process, 'APPLY_MIC_CALIBRATION', False)
     if apply_cal_val:
@@ -309,15 +310,30 @@ def run_cta2034_extraction(
 
     frd_offset_val = float(frd_db_offset) if frd_db_offset is not None else getattr(config_process, 'FRD_DB_OFFSET', 0.0)
 
-    subtract_tof_val = subtract_tof if subtract_tof is not None else getattr(config_process, 'SUBTRACT_TOF', False)
-    if subtract_tof_val:
+    subtract_tof = subtract_tof if subtract_tof is not None else getattr(config_process, 'SUBTRACT_TOF', "Off")
+    if isinstance(subtract_tof, bool):
+        subtract_tof = "Ref Origin" if subtract_tof else "Off"
+        
+    if subtract_tof.lower() == "ref origin":
         # NOTE: Using `r_in` (the radius before cartesian mic offsets are applied) 
         # ensures the TOF reference point shifts *with* the mic offset. For example, 
         # if the mic offset aligns with a tweeter, the TOF is calculated back to that 
         # offset point. Previously, this used `r_final` which always calculated TOF 
         # back to the absolute 0,0,0 origin regardless of offset.
         tof_ref_dist = np.min(r_in)
-        print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m)")
+        print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m from Ref Origin)")
+        p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
+    elif subtract_tof.lower() == "ir peak":
+        from fdw_smoothing_core import get_earliest_significant_peak
+        idx_on_axis = map_indices['H0']
+        p_on_axis = p_raw_all[:, idx_on_axis]
+        ir_on_axis = complex_to_ir(p_on_axis, freqs)
+        target_fs = fs_val if fs_val else (44100 if freqs[-1] < 23000.0 else 48000)
+        peak_idx = get_earliest_significant_peak(ir_on_axis, target_fs, -12.0)
+        peak_time = peak_idx / target_fs
+        tof_ref_dist = peak_time * c_sound
+        print(f"TOF subtraction ON (IR Peak detection)")
+        print(f"Detected IR peak at {peak_time*1000:.3f} ms (ref {tof_ref_dist:.6f} m)")
         p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
     else:
         print("TOF subtraction: OFF")
@@ -368,7 +384,7 @@ def run_sweep_extraction(
     dist_mic = dist_mic if dist_mic is not None else config_process.DIST_MIC
     obs_mode = obs_mode if obs_mode is not None else config_process.OBSERVATION_MODE
     offset_xyz = offset_xyz if offset_xyz is not None else (config_process.OFFSET_MIC_X, config_process.OFFSET_MIC_Y, config_process.OFFSET_MIC_Z)
-    subtract_tof = subtract_tof if subtract_tof is not None else config_process.SUBTRACT_TOF
+    subtract_tof = subtract_tof if subtract_tof is not None else getattr(config_process, 'SUBTRACT_TOF', "Off")
     frd_prefix = frd_prefix if frd_prefix is not None else config_process.FRD_PREFIX
     c_sound = c_sound if c_sound is not None else config_process.SPEED_OF_SOUND
     gen_ir = generate_ir_files if generate_ir_files is not None else getattr(config_process, 'GENERATE_IR_FILES', False)
@@ -448,8 +464,11 @@ def run_sweep_extraction(
     r_final, th_final_rad, ph_final_rad = cartesian_to_spherical(x_b, y_b, z_b)
     coords_spherical_final = np.column_stack((np.degrees(th_final_rad), np.degrees(ph_final_rad), r_final)).tolist()
 
+    if isinstance(subtract_tof, bool):
+        subtract_tof = "Ref Origin" if subtract_tof else "Off"
+
     tof_ref_dist = None
-    if subtract_tof:
+    if subtract_tof.lower() == "ref origin":
         # NOTE: Using `r_in` (the radius before cartesian mic offsets are applied) 
         # ensures the TOF reference point shifts *with* the mic offset. For example, 
         # if the mic offset aligns with a tweeter, the TOF is calculated back to that 
@@ -457,7 +476,9 @@ def run_sweep_extraction(
         # back to the absolute 0,0,0 origin regardless of offset.
         r_acous = r_in
         tof_ref_dist = np.min(r_acous)
-        print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m)")
+        print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m from Ref Origin)")
+    elif subtract_tof.lower() == "ir peak":
+        pass
     else:
         print("TOF subtraction: OFF")
 
@@ -483,7 +504,33 @@ def run_sweep_extraction(
         
     frd_offset_val = float(frd_db_offset) if frd_db_offset is not None else getattr(config_process, 'FRD_DB_OFFSET', 0.0)
 
-    if subtract_tof and tof_ref_dist is not None:
+    if subtract_tof.lower() == "ir peak":
+        from fdw_smoothing_core import get_earliest_significant_peak
+        
+        if use_coord_list:
+            idx_ref = int(np.argmin(r_in))
+        else:
+            target_th = float(zero_theta)
+            target_ph = float(zero_phi)
+            
+            idx_ref = 0
+            min_err = float('inf')
+            for i, (th, ph, r) in enumerate(coords_spherical):
+                err = abs(th - target_th) + abs(ph - target_ph)
+                if err < min_err:
+                    min_err = err
+                    idx_ref = i
+                
+        p_ref = p_raw_all[:, idx_ref]
+        ir_ref = complex_to_ir(p_ref, freqs)
+        target_fs = fs_val if fs_val else (44100 if freqs[-1] < 23000.0 else 48000)
+        peak_idx = get_earliest_significant_peak(ir_ref, target_fs, -12.0)
+        peak_time = peak_idx / target_fs
+        tof_ref_dist = peak_time * c_sound
+        print(f"TOF subtraction ON (IR Peak detection)")
+        print(f"Detected IR peak at {peak_time*1000:.3f} ms (ref {tof_ref_dist:.6f} m) from index {idx_ref}")
+
+    if subtract_tof.lower() in ("ref origin", "ir peak") and tof_ref_dist is not None:
         tof_phasor = get_tof_phasor(freqs, tof_ref_dist, c_sound)
     else:
         tof_phasor = None
