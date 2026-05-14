@@ -1,6 +1,10 @@
 # Changelog
 
-## [2.2.7] - 2026-05-09
+## [2.2.8] - 2026-05-13
+
+Fixed: Kword args out of sync between hlas_gui.py and grid_gen.py for cyl_radius and cyl_height after conversion from meters to millimeters. 
+
+## [2.2.7] - 2026-05-08
 
 Fixed: Spatial Error Viewer not compatible with phase compensation applied to 'extract_pressures_core.py'  in previous update. How: Added phase correction bypass mode in extract_pressures_core.py.
 Added: "IR Peak" mode for the "Subtract Time Of Flight" feature. This mode automatically finds the phase timing reference by temporarily generating the impulse response for the point on the reference axis, locating the IR peak, and using that sample time to determine the exact amount of delay phase compensation to apply to all FRD exports in the measurement set.

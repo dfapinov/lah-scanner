@@ -33,7 +33,7 @@ GUI_TOOLTIPS = {
     'output_dir': "Directory where final extracted FRD and/or WAV files will be saved.",
     'frd_prefix': "Prefix added to the beginning of all extracted file names.",
     'frd_db_offset': "Scales the exported FRD dB levels (does not affect IR wav files).",
-    'subtract_tof': "Mathematically subtract the time-of-flight phase delay. 'Ref Origin' uses the physical distance. 'IR Peak' dynamically detects the impulse response peak.",
+    'subtract_tof': "Mathematically subtract the time-of-flight phase delay. 'Ref Origin' uses the physical distance. 'IR Peak' dynamically detects the impulse response peak. 'Min Phase Ref' fits unwrapped phase to minimum phase.",
     'generate_ir_files': "If checked, generates .wav impulse responses along with the standard frequency response (.frd) text files.",
     'apply_mic_cal': "Applies the selected microphone calibration file to the extracted results.",
     'mic_cal_mode': "Subtract (standard for measurement mics where the cal file describes the mic's own response) or Add.",
@@ -2146,7 +2146,7 @@ class SpkrScannerApp(tk.Tk):
         combo_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Label(combo_frame, text="Subtract TOF Phase:").pack(side=tk.LEFT, padx=(0, 5))
         self.stage5_vars['subtract_tof'] = tk.StringVar(value="Ref Origin")
-        cb_tof = ttk.Combobox(combo_frame, textvariable=self.stage5_vars['subtract_tof'], values=["Off", "Ref Origin", "IR Peak"], state="readonly", width=12)
+        cb_tof = ttk.Combobox(combo_frame, textvariable=self.stage5_vars['subtract_tof'], values=["Off", "Ref Origin", "IR Peak", "Min Phase Ref"], state="readonly", width=15)
         cb_tof.pack(side=tk.LEFT)
         if GUI_TOOLTIPS.get('subtract_tof'): ToolTip(cb_tof, GUI_TOOLTIPS['subtract_tof'])
 

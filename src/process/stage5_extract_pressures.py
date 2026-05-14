@@ -31,6 +31,82 @@ def get_tof_phasor(freqs, dist_m, c_sound):
     """Calculates the complex phase rotation array needed to subtract time-of-flight."""
     return np.exp(1j * 2.0 * np.pi * freqs * (dist_m / c_sound))
 
+def get_min_phase_delay(p_complex, freqs, c_sound):
+    """
+    Computes the TOF delay by fitting the true unwrapped phase to the minimum phase 
+    derived from the magnitude response.
+    """
+    eps = np.finfo(float).eps
+    mag_db = 20 * np.log10(np.abs(p_complex) + eps)
+    
+    # 1. Create a dense linear frequency grid for minimum phase generation
+    fs_sim = 192000
+    n_fft = 262144
+    f_lin = np.fft.rfftfreq(n_fft, 1 / fs_sim)
+    
+    # 2. Interpolate magnitude to linear grid
+    mag_lin_db = np.interp(f_lin, freqs, mag_db)
+    
+    # 3. Taper out-of-band to prevent artifacts
+    f_min, f_max = freqs[0], freqs[-1]
+    fade_octaves = 1.0
+    f_lower_fade = f_min / (2.0 ** fade_octaves)
+    f_upper_fade = f_max * (2.0 ** fade_octaves)
+    
+    weights = np.ones_like(f_lin)
+    
+    lower_idx = (f_lin > f_lower_fade) & (f_lin < f_min)
+    if np.any(lower_idx):
+        norm_f = np.log2(f_lin[lower_idx] / f_lower_fade) / fade_octaves
+        weights[lower_idx] = 0.5 * (1 - np.cos(np.pi * norm_f))
+        
+    upper_idx = (f_lin > f_max) & (f_lin < f_upper_fade)
+    if np.any(upper_idx):
+        norm_f = np.log2(f_lin[upper_idx] / f_max) / fade_octaves
+        weights[upper_idx] = 0.5 * (1 + np.cos(np.pi * norm_f))
+        
+    weights[f_lin <= f_lower_fade] = 0.0
+    weights[f_lin >= f_upper_fade] = 0.0
+    
+    mag_lin_db *= weights
+    
+    # 4. Generate Minimum Phase via Real Cepstrum
+    ln_mag = mag_lin_db / 8.685889638
+    ceps = np.fft.irfft(ln_mag, n=n_fft)
+    
+    w = np.zeros(n_fft)
+    w[0] = 1.0
+    w[1:n_fft//2] = 2.0
+    w[n_fft//2] = 1.0
+    
+    complex_spec = np.fft.rfft(ceps * w)
+    phase_rad_lin = np.imag(complex_spec)
+    
+    # 5. Interpolate back to target_freqs
+    min_phase_rad = np.interp(freqs, f_lin, phase_rad_lin)
+    
+    # 6. Fit true phase to min phase to find delay
+    true_phase_rad = np.unwrap(np.angle(p_complex))
+    
+    # Align the phases at a low frequency to avoid 2*pi offset issues
+    idx_align = np.argmin(np.abs(freqs - 300.0))
+    offset = true_phase_rad[idx_align] - min_phase_rad[idx_align]
+    offset = np.round(offset / (2 * np.pi)) * 2 * np.pi
+    true_phase_rad -= offset
+    
+    fit_mask = (freqs >= 100.0) & (freqs <= 20000.0)
+    if not np.any(fit_mask):
+        fit_mask = freqs > 0 # fallback
+        
+    omega = 2.0 * np.pi * freqs[fit_mask]
+    phase_diff = true_phase_rad[fit_mask] - min_phase_rad[fit_mask]
+    
+    m, _, _, _ = np.linalg.lstsq(omega[:, np.newaxis], phase_diff, rcond=None)
+    tau = -m[0]
+    
+    tof_ref_dist = tau * c_sound
+    return tof_ref_dist
+
 # -------------------------------------------------
 # CTA-2034 Helpers
 # -------------------------------------------------
@@ -335,6 +411,13 @@ def run_cta2034_extraction(
         print(f"TOF subtraction ON (IR Peak detection)")
         print(f"Detected IR peak at {peak_time*1000:.3f} ms (ref {tof_ref_dist:.6f} m)")
         p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
+    elif subtract_tof.lower() == "min phase ref":
+        idx_on_axis = map_indices['H0']
+        p_on_axis = p_raw_all[:, idx_on_axis]
+        tof_ref_dist = get_min_phase_delay(p_on_axis, freqs, c_sound)
+        print(f"TOF subtraction ON (Min Phase Ref)")
+        print(f"Detected Min Phase delay: {tof_ref_dist/c_sound*1000:.3f} ms (ref {tof_ref_dist:.6f} m)")
+        p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
     else:
         print("TOF subtraction: OFF")
 
@@ -479,6 +562,8 @@ def run_sweep_extraction(
         print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m from Ref Origin)")
     elif subtract_tof.lower() == "ir peak":
         pass
+    elif subtract_tof.lower() == "min phase ref":
+        pass
     else:
         print("TOF subtraction: OFF")
 
@@ -530,7 +615,27 @@ def run_sweep_extraction(
         print(f"TOF subtraction ON (IR Peak detection)")
         print(f"Detected IR peak at {peak_time*1000:.3f} ms (ref {tof_ref_dist:.6f} m) from index {idx_ref}")
 
-    if subtract_tof.lower() in ("ref origin", "ir peak") and tof_ref_dist is not None:
+    if subtract_tof.lower() == "min phase ref":
+        if use_coord_list:
+            idx_ref = int(np.argmin(r_in))
+        else:
+            target_th = float(zero_theta)
+            target_ph = float(zero_phi)
+            
+            idx_ref = 0
+            min_err = float('inf')
+            for i, (th, ph, r) in enumerate(coords_spherical):
+                err = abs(th - target_th) + abs(ph - target_ph)
+                if err < min_err:
+                    min_err = err
+                    idx_ref = i
+                
+        p_ref = p_raw_all[:, idx_ref]
+        tof_ref_dist = get_min_phase_delay(p_ref, freqs, c_sound)
+        print(f"TOF subtraction ON (Min Phase Ref)")
+        print(f"Detected Min Phase delay at {tof_ref_dist/c_sound*1000:.3f} ms (ref {tof_ref_dist:.6f} m) from index {idx_ref}")
+
+    if subtract_tof.lower() in ("ref origin", "ir peak", "min phase ref") and tof_ref_dist is not None:
         tof_phasor = get_tof_phasor(freqs, tof_ref_dist, c_sound)
     else:
         tof_phasor = None

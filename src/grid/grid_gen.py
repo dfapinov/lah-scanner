@@ -27,8 +27,8 @@ def calculate_geometry_from_cylindrical_waypoints(top_crit_pos, bot_crit_pos):
     Returns:
     dict
         Dictionary containing the computed parameters:
-        - 'cyl_radius': Internal radius in meters.
-        - 'cyl_height': Internal height in meters.
+        - 'cyl_radius_mm': Internal radius in millimeters.
+        - 'cyl_height_mm': Internal height in millimeters.
         - 'bottom_cutoff_mm': Bottom cutoff radius in millimeters.
         - 'z_offset_mm': The absolute Z center point calculated from the waypoints.
     """
@@ -36,8 +36,8 @@ def calculate_geometry_from_cylindrical_waypoints(top_crit_pos, bot_crit_pos):
     bot_r_mm, _, bot_z_mm = bot_crit_pos
     
     return {
-        'cyl_radius': top_r_mm / 1000.0,
-        'cyl_height': abs(top_z_mm - bot_z_mm) / 1000.0,
+        'cyl_radius_mm': top_r_mm,
+        'cyl_height_mm': abs(top_z_mm - bot_z_mm),
         'bottom_cutoff_mm': bot_r_mm,
         'z_offset_mm': (top_z_mm + bot_z_mm) / 2.0
     }
@@ -154,8 +154,8 @@ def generate_cylinder_spiral(N, R, H, cap_frac,
     return df
 
 def generate_measurement_grid(
-    cyl_radius=None,
-    cyl_height=None,
+    cyl_radius_mm=None,
+    cyl_height_mm=None,
     num_points=1000,
     wall_thickness_mm=50.0,
     bottom_cutoff_mm=None,
@@ -178,13 +178,16 @@ def generate_measurement_grid(
     # If valid waypoints are provided, calculate geometry and override manual settings
     if top_crit_pos is not None and bot_crit_pos is not None:
         geom = calculate_geometry_from_cylindrical_waypoints(top_crit_pos, bot_crit_pos)
-        cyl_radius = geom['cyl_radius']
-        cyl_height = geom['cyl_height']
+        cyl_radius_mm = geom['cyl_radius_mm']
+        cyl_height_mm = geom['cyl_height_mm']
         bottom_cutoff_mm = geom['bottom_cutoff_mm']
         z_offset_mm = geom['z_offset_mm']
 
-    if cyl_radius is None or cyl_height is None or bottom_cutoff_mm is None:
-        raise ValueError("Grid geometry missing: provide cyl_radius, cyl_height, and bottom_cutoff_mm OR top/bot waypoints.")
+    if cyl_radius_mm is None or cyl_height_mm is None or bottom_cutoff_mm is None:
+        raise ValueError("Grid geometry missing: provide cyl_radius_mm, cyl_height_mm, and bottom_cutoff_mm OR top/bot waypoints.")
+
+    cyl_radius = cyl_radius_mm / 1000.0
+    cyl_height = cyl_height_mm / 1000.0
 
     bottom_cutoff = bottom_cutoff_mm / 1000.0
 
@@ -328,8 +331,8 @@ def generate_measurement_grid(
 if __name__ == "__main__":
     from config_grid import (
         OUTPUT_GRID_GEN,
-        cyl_radius,
-        cyl_height,
+        cyl_radius_mm,
+        cyl_height_mm,
         num_points,
         cap_fraction,            
         wall_thickness_mm,      
@@ -350,8 +353,8 @@ if __name__ == "__main__":
     )
 
     grid_dict = generate_measurement_grid(
-        cyl_radius=cyl_radius,
-        cyl_height=cyl_height,
+        cyl_radius_mm=cyl_radius_mm,
+        cyl_height_mm=cyl_height_mm,
         num_points=num_points,
         wall_thickness_mm=wall_thickness_mm,
         bottom_cutoff_mm=bottom_cutoff_mm,

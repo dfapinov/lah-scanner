@@ -127,7 +127,7 @@ FRD_PREFIX = "Response"   # base name for arc-sweep FRD file exports (e.g., "res
 FRD_DB_OFFSET = 0.0       # Scales the exported FRD dB levels (does not affect IR wav files).
 OBSERVATION_MODE = "Internal" # Wavefront observation mode (Internal = anechoic response. External = Room response, Full = both).
 GENERATE_IR_FILES = False # Set to True to generate .wav impulse responses from complex pressures
-SUBTRACT_TOF       = "Ref Origin" # "Off", "Ref Origin", "IR Peak" - Subtract time-of-flight (TOF) phase to reduce FRD phase wrapping.
+SUBTRACT_TOF       = "Ref Origin" # "Off", "Ref Origin", "IR Peak", "Min Phase Ref" - Subtract time-of-flight (TOF) phase to reduce FRD phase wrapping.
 USE_OPTIMIZED_ORIGINS = True
 
 # When USE_COORD_LIST=True, the TOF corresponding to the smallest radius is subtracted
