@@ -7,32 +7,43 @@ Fixed: Kword args out of sync between hlas_gui.py and grid_gen.py for cyl_radius
 ## [2.2.7] - 2026-05-08
 
 Fixed: Spatial Error Viewer not compatible with phase compensation applied to 'extract_pressures_core.py'  in previous update. How: Added phase correction bypass mode in extract_pressures_core.py.
+
 Added: "IR Peak" mode for the "Subtract Time Of Flight" feature. This mode automatically finds the phase timing reference by temporarily generating the impulse response for the point on the reference axis, locating the IR peak, and using that sample time to determine the exact amount of delay phase compensation to apply to all FRD exports in the measurement set.
 
 ## [2.2.6] - 2026-05-08
 
 Added: FRD DB Offset. This feature scales the magnitude level of the exported FRD files to allow SPL calibration. It does not affect exported impulse response wavs.
+
 Added: Microphone calibration files are saved to the project.jason file as a fall-back in case the original file is missing.
+
 Removed: Redundant 'target_fs' argument from complex_to_ir_core.py Why: AI added it in previous version without developers intent.
 
 ## [2.2.5] - 2026-05-07
 
 Added: Phase compensation in `extract_pressures_core.py` for the 5-sample padding introduced during upstream IR generation (`audio.py "split_idx = len(inv_data) - 5"). The input IR sample rate is now passed through the pipeline to enable precise 5-sample phase rotation.
+
 Changed: The phase reference for measurements when "Subtract Time of Flight" is enabled now dynamically tracks the `mic_offset` values. This allows setting the phase reference at positions other than the origin of the measurement grid (e.g., if the tweeter is offset forward and above the origin). This change is also reflected visually as the origin point of the red reference axis in the Stage 5 GUI plots.
 
 ## [2.2.4] - 2026-05-07
 
 Changed: FRD file name convention for better VituixCAD compatability.
+
 Changed: Seperate Horizontal and Vertical response file output directories replaced with a single directory named after the project title. Why: VituixCAD only opens response files from a single directory.
+
 Fixed: GUI did not pass use_coord_list to stage 5 when using sweep mode, resulting in variable pulls from config_process.py.
+
 Fixed: CTA-2034 export mode did not support the 'Subtract Time of Flight' setting, resulting in the exported On-Axis phase including the full TOF delay. How: Added the subtract_tof argument to the CTA-2034 extraction function. Extracted the TOF phase rotation math into a shared helper function and applied it to the CTA-2034 data.
 
 ## [2.2.3] - 2026-05-06
 
 Added: Completion timer for each processing stage.
+
 Added: Auto-saving of Stage 2 validation results image.
+
 Added: "Save View Image" button in Stage 5 for microphone position plots.
+
 Changed: Transitioned Cylinder Height, Cylinder Radius, and Bottom Cutoff grid settings to millimeters (mm) across the UI and processing scripts.
+
 Changed: Physical waypoints now override and auto-fill the numerical cylinder dimensions in the UI.
 
 ## [2.2.2] - 2026-05-05
