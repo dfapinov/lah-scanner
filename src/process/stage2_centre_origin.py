@@ -95,6 +95,7 @@ import sys
 import os
 import re
 import math
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -377,11 +378,26 @@ def export_interpolated_origins(history_freq, history_search_x, history_search_y
         origins_full = np.column_stack((interp_x, interp_y, interp_z))
         
         if save_to_disk:
-            save_dict = {k: data[k] for k in data.files}
+            save_dict = {k: data[k] for k in data.files if k != schema.ORIGINS_MM}
             save_dict[schema.ORIGINS_MM] = origins_full
+            if hasattr(data, "close"):
+                data.close()
             
             export_filename = os.path.join(input_dir, output_filename)
-            np.savez(export_filename, **save_dict)
+            export_dir = os.path.dirname(export_filename) or "."
+            fd, tmp_filename = tempfile.mkstemp(
+                prefix=f".{os.path.basename(output_filename)}.",
+                suffix=".tmp.npz",
+                dir=export_dir
+            )
+            os.close(fd)
+            try:
+                np.savez(tmp_filename, **save_dict)
+                os.replace(tmp_filename, export_filename)
+            except Exception:
+                if os.path.exists(tmp_filename):
+                    os.remove(tmp_filename)
+                raise
             print(f"Successfully exported full resolution data with appended origins to: {export_filename}\n")
         return origins_full
     else:

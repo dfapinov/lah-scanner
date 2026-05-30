@@ -1072,7 +1072,9 @@ class Stage5Viewer:
         self._drawn_artists = []
 
     def update_view(self, box_dims=(0.2, 0.3, 0.4), mic_coords_xyz=None, 
-                    ref_origin=(0.0, 0.0, 0.0), zero_theta_deg=90.0, zero_phi_deg=0.0):
+                    ref_origin=(0.0, 0.0, 0.0), zero_theta_deg=90.0, zero_phi_deg=0.0,
+                    named_points_xyz=None, z_center=None, box_center=(0.0, 0.0, 0.0),
+                    box_vertices=None):
         """
         Updates the 3D plot with new parameters without resetting camera rotation.
         """
@@ -1084,35 +1086,42 @@ class Stage5Viewer:
                 pass
         self._drawn_artists.clear()
 
-        # 1. Draw DUT Box centered at (0,0,0)
+        # 1. Draw DUT box from the project baffle waypoints and user depth.
         width_y, depth_x, height_z = box_dims
-        dx, dy, dz = depth_x / 2.0, width_y / 2.0, height_z / 2.0
-        
-        # Define the 8 vertices of the box
-        r = [-1, 1]
-        pts = np.array([[x*dx, y*dy, z*dz] for x in r for y in r for z in r])
-        
-        # Define the 6 faces of the box
-        faces = [
-            [pts[0], pts[1], pts[3], pts[2]], # X- (Back)
-            [pts[4], pts[5], pts[7], pts[6]], # X+ (Front)
-            [pts[0], pts[1], pts[5], pts[4]], # Y- (Right)
-            [pts[2], pts[3], pts[7], pts[6]], # Y+ (Left)
-            [pts[0], pts[2], pts[6], pts[4]], # Z- (Bottom)
-            [pts[1], pts[3], pts[7], pts[5]], # Z+ (Top)
-        ]
-        
-        face_colors = ['cyan', 'blue', 'cyan', 'cyan', 'cyan', 'cyan']
+        if box_vertices is not None and len(box_vertices) == 8:
+            pts = np.array(box_vertices, dtype=float)
+            faces = [
+                [pts[0], pts[1], pts[2], pts[3]], # Front baffle plane
+                [pts[4], pts[5], pts[6], pts[7]], # Back
+                [pts[0], pts[1], pts[5], pts[4]], # Left
+                [pts[3], pts[2], pts[6], pts[7]], # Right
+                [pts[0], pts[3], pts[7], pts[4]], # Bottom
+                [pts[1], pts[2], pts[6], pts[5]], # Top
+            ]
+            face_colors = ['blue', 'cyan', 'cyan', 'cyan', 'cyan', 'cyan']
+        else:
+            cx, cy, cz = box_center
+            dx, dy, dz = depth_x / 2.0, width_y / 2.0, height_z / 2.0
+
+            # Define the 8 vertices of the box
+            r = [-1, 1]
+            pts = np.array([[cx + x*dx, cy + y*dy, cz + z*dz] for x in r for y in r for z in r])
+            faces = [
+                [pts[0], pts[1], pts[3], pts[2]], # X- (Back)
+                [pts[4], pts[5], pts[7], pts[6]], # X+ (Front)
+                [pts[0], pts[1], pts[5], pts[4]], # Y- (Right)
+                [pts[2], pts[3], pts[7], pts[6]], # Y+ (Left)
+                [pts[0], pts[2], pts[6], pts[4]], # Z- (Bottom)
+                [pts[1], pts[3], pts[7], pts[5]], # Z+ (Top)
+            ]
+            face_colors = ['cyan', 'blue', 'cyan', 'cyan', 'cyan', 'cyan']
+        bounds_points = [pts]
         
         poly3d = Poly3DCollection(faces, alpha=0.15, facecolors=face_colors, edgecolors='gray', linewidths=1)
         self.ax.add_collection3d(poly3d)
         self._drawn_artists.append(poly3d)
         
-        # Dummy point to ensure box appears in the legend
-        dut_scatter = self.ax.scatter([0], [0], [0], c='cyan', marker='s', s=20, alpha=0.5, label='DUT')
-        self._drawn_artists.append(dut_scatter)
-
-        max_radius = max(dx, dy, dz)
+        max_radius = max(float(np.linalg.norm(pt)) for pt in pts)
 
         # 2. Draw Mic Coordinates
         if mic_coords_xyz is not None and len(mic_coords_xyz) > 0:
@@ -1120,15 +1129,32 @@ class Stage5Viewer:
             mic_scatter = self.ax.scatter(mic_coords_xyz[:, 0], mic_coords_xyz[:, 1], mic_coords_xyz[:, 2], 
                             c='blue', marker='o', s=15, alpha=0.7, label='Mic Positions')
             self._drawn_artists.append(mic_scatter)
+            bounds_points.append(mic_coords_xyz)
             
             dists = np.linalg.norm(mic_coords_xyz, axis=1)
             if len(dists) > 0:
                 max_radius = max(max_radius, np.max(dists))
 
-        # 3. Draw Reference Origin and Axes
+        # 3. Draw named project positions such as tweeter, ref origin, and user positions.
+        if named_points_xyz:
+            palette = ['#ff7f0e', '#2ca02c', '#9467bd', '#8c564b', '#e377c2', '#17becf', '#bcbd22']
+            for idx, point in enumerate(named_points_xyz):
+                try:
+                    label = str(point.get('name', f'Position {idx + 1}'))
+                    x, y, z = point['xyz']
+                    color = palette[idx % len(palette)]
+                except Exception:
+                    continue
+                scatter = self.ax.scatter([x], [y], [z], c=color, marker='D', s=55, label=label)
+                self._drawn_artists.append(scatter)
+                max_radius = max(max_radius, float(np.linalg.norm([x, y, z])))
+                bounds_points.append(np.array([[x, y, z]]))
+
+        # 4. Draw Reference Origin and Axes
         ox, oy, oz = ref_origin
         ref_scatter = self.ax.scatter([ox], [oy], [oz], c='red', marker='P', s=40, label='Ref Origin (Offset)')
         self._drawn_artists.append(ref_scatter)
+        bounds_points.append(np.array([[ox, oy, oz]]))
         
         # Convert angles to radians
         th = np.radians(zero_theta_deg)
@@ -1143,23 +1169,37 @@ class Stage5Viewer:
         quiv = self.ax.quiver(ox, oy, oz, fx, fy, fz, color='red', arrow_length_ratio=0.1, 
                        linewidth=2, label='Zero Axis (Front)')
         self._drawn_artists.append(quiv)
+        bounds_points.append(np.array([[ox + fx, oy + fy, oz + fz]]))
 
         # Place a multi-column legend at the bottom of the plot area
         leg = self.ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize='small', frameon=False)
         self._drawn_artists.append(leg)
         
-        self._set_axes_equal()
+        self._set_axes_equal(data_points=np.vstack(bounds_points), z_center=z_center)
         self.fig.canvas.draw_idle()
 
-    def _set_axes_equal(self):
+    def _set_axes_equal(self, data_points=None, z_center=None):
         # Hack to force equal aspect ratio in matplotlib 3D plots
         try:
             self.ax.set_box_aspect((1, 1, 1))
         except AttributeError:
             pass
-        limits = np.array([self.ax.get_xlim3d(), self.ax.get_ylim3d(), self.ax.get_zlim3d()])
-        origin = np.mean(limits, axis=1)
-        radius = 0.5 * np.max(np.abs(limits[:, 1] - limits[:, 0]))
-        self.ax.set_xlim3d([origin[0] - radius, origin[0] + radius])
-        self.ax.set_ylim3d([origin[1] - radius, origin[1] + radius])
-        self.ax.set_zlim3d([origin[2] - radius, origin[2] + radius])
+        if data_points is None or len(data_points) == 0:
+            data_points = np.array([[0.0, 0.0, 0.0]])
+
+        data_points = np.asarray(data_points, dtype=float)
+        mins = np.min(data_points, axis=0)
+        maxs = np.max(data_points, axis=0)
+        center_z = float(z_center) if z_center is not None else float((mins[2] + maxs[2]) / 2.0)
+
+        radius = max(
+            abs(mins[0]), abs(maxs[0]),
+            abs(mins[1]), abs(maxs[1]),
+            abs(mins[2] - center_z), abs(maxs[2] - center_z),
+            0.1
+        )
+        radius *= 1.08
+
+        self.ax.set_xlim3d([-radius, radius])
+        self.ax.set_ylim3d([-radius, radius])
+        self.ax.set_zlim3d([center_z - radius, center_z + radius])

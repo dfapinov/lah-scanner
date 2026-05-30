@@ -109,9 +109,9 @@ MANUAL_ORDER_TABLE = {
 }
 
 # --- Reguarlization ---
-NOISE_FLOOR_START_DB = -30.0 # The point (in dB relative to the peak mode) where damping starts.
-NOISE_FLOOR_MAX_DB = -50.0 # The point (in dB relative to the peak mode) where damping hits MAX_LAMBDA.
-MAX_LAMBDA = 0.00000010 # The maximum penalty applied to modes below NOISE_FLOOR_MAX_DB. Prevents coefficient explosion with ill-conditioning.
+NOISE_FLOOR_START_DB = -30.0 # Fixed default damping start.
+NOISE_FLOOR_MAX_DB = -40.0 # Fixed default point where damping hits MAX_LAMBDA.
+MAX_LAMBDA = 0.00000100 # Fixed default maximum penalty applied to modes below NOISE_FLOOR_MAX_DB.
 
 
 CONDITION_METRICS = True  # Show matrix condition number for analysis.

@@ -1,9 +1,8 @@
-import tkinter as tk
+﻿import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
 import sys
 import traceback
-import pandas as pd
 import json
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
@@ -13,13 +12,9 @@ import datetime
 
 # Append script directories to sys.path so we can import them as libraries
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(current_dir, 'grid'))
 sys.path.append(os.path.join(current_dir, 'process'))
 
 try:
-    from grid_gen import generate_measurement_grid
-    from path_plan import plan_path
-    from coord_viewer_core import CoordViewerEngine
     from stage1_fdwsmooth import fdwsmooth
 except ImportError as e:
     messagebox.showerror("Import Error", f"Failed to import project scripts:\n{e}")
@@ -37,9 +32,10 @@ GUI_TOOLTIPS = {
     'generate_ir_files': "If checked, generates .wav impulse responses along with the standard frequency response (.frd) text files.",
     'apply_mic_cal': "Applies the selected microphone calibration file to the extracted results.",
     'mic_cal_mode': "Subtract (standard for measurement mics where the cal file describes the mic's own response) or Add.",
-    'offset_mic_x': "Offsets the measurement reference center relative to the physical grid center.",
-    'offset_mic_y': "Offsets the measurement reference center relative to the physical grid center.",
-    'offset_mic_z': "Offsets the measurement reference center relative to the physical grid center.",
+    'offset_mic_x': "Offsets the measurement reference center relative to the physical grid center, in millimeters.",
+    'offset_mic_y': "Offsets the measurement reference center relative to the physical grid center, in millimeters.",
+    'offset_mic_z': "Offsets the measurement reference center relative to the physical grid center, in millimeters.",
+    'dut_depth_x': "Cabinet depth in millimeters. Stage 5 converts this to meters before running the extraction scripts.",
     'zero_theta_deg': "Defines which physical angle represents the front 'on-axis' of the speaker (Theta).",
     'zero_phi_deg': "Defines which physical angle represents the front 'on-axis' of the speaker (Phi).",
     'dist_mic': "Distance from the reference center to the virtual microphone.",
@@ -131,10 +127,14 @@ class ToolTip:
             self.tip_window = None
 
 
+# Match Tk's default panel grey for exposed areas below short scrollable forms.
+SETTINGS_CANVAS_BG = "#d9d9d9"
+
+
 class ScrollableFrame(ttk.Frame):
     def __init__(self, container, *args, **kwargs):
         super().__init__(container, *args, **kwargs)
-        self.canvas = tk.Canvas(self, highlightthickness=0)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bg=SETTINGS_CANVAS_BG)
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
 
@@ -226,9 +226,6 @@ class SpkrScannerApp(tk.Tk):
         # Shared Data States
         self.project_dir = tk.StringVar(value=os.getcwd())
         self.project_name = tk.StringVar(value="MySpeaker")
-        self.grid_data = None  # Holds the raw grid DataFrame
-        self.planned_data = None  # Holds the planned path DataFrame
-
         # Track state for pop-up UI viewers
         self.stage5_viewer = None
         self.stage5_canvas = None
@@ -257,6 +254,12 @@ class SpkrScannerApp(tk.Tk):
         self.deiconify() # Reveal the fully initialized main window
 
     def report_callback_exception(self, exc, val, tb):
+        if exc is KeyboardInterrupt:
+            try:
+                print("UI callback interrupted by user.", file=sys.stderr)
+            except Exception:
+                pass
+            return
         err_msg = "".join(traceback.format_exception(exc, val, tb))
         try:
             print(f"Exception in UI Callback:\n{err_msg}", file=sys.stderr)
@@ -304,13 +307,11 @@ class SpkrScannerApp(tk.Tk):
         self.main_notebook = ttk.Notebook(self.left_panel)
         self.main_notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Tab 1: Grid Operations
-        self.tab_grid_ops = ttk.Frame(self.main_notebook)
-        self.main_notebook.add(self.tab_grid_ops, text="Grid Generation & Planning")
+        self.tab_project_meta = ttk.Frame(self.main_notebook)
+        self.main_notebook.add(self.tab_project_meta, text="Project Metadata")
 
-        # Tab 2: Processing
         self.tab_processing = ttk.Frame(self.main_notebook)
-        self.main_notebook.add(self.tab_processing, text="Processing Pipelines")
+        self.main_notebook.add(self.tab_processing, text="Processing")
         
         self.proc_notebook = ttk.Notebook(self.tab_processing)
         self.proc_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -322,7 +323,7 @@ class SpkrScannerApp(tk.Tk):
         self.proc_notebook.add(self.tab_stage2, text="Stage 2: Acoustic Origin")
 
         self.tab_stage3 = ttk.Frame(self.proc_notebook)
-        self.proc_notebook.add(self.tab_stage3, text="Stage 3: Optimize SHE")
+        self.proc_notebook.add(self.tab_stage3, text="Stage 3: Find Order N")
 
         self.tab_stage4 = ttk.Frame(self.proc_notebook)
         self.proc_notebook.add(self.tab_stage4, text="Stage 4: SHE Solve")
@@ -330,19 +331,12 @@ class SpkrScannerApp(tk.Tk):
         self.tab_stage5 = ttk.Frame(self.proc_notebook)
         self.proc_notebook.add(self.tab_stage5, text="Stage 5: Extract Pressures")
 
-        # --- RIGHT PANEL: View Swapping ---
-        self.right_frame_plot = ttk.Frame(self.right_panel) # For Grid/Planning viewer
-        self.right_frame_processing = ttk.Frame(self.right_panel) # For all Processing UI
-
-        self.right_frame_plot.grid(row=0, column=0, sticky="nsew")
+        # --- RIGHT PANEL: Processing output and Stage 5 preview ---
+        self.right_frame_processing = ttk.Frame(self.right_panel)
         self.right_frame_processing.grid(row=0, column=0, sticky="nsew")
-        self.right_frame_plot.tkraise() # Start with Plot visible on top
 
         self.main_notebook.bind("<<NotebookTabChanged>>", self._on_main_tab_changed)
         self.proc_notebook.bind("<<NotebookTabChanged>>", self._on_proc_tab_changed)
-
-        self.viewer = None
-        self.canvas_viewer = None
 
         # --- CLI Output (Unified Right Panel for Processing) ---
         # This PanedWindow will live inside the right_frame_processing
@@ -424,21 +418,17 @@ class SpkrScannerApp(tk.Tk):
             
         self._update_cli()
 
-        self._build_grid_ops_ui()
+        self._build_project_metadata_ui()
         self._build_stage1_ui()
         self._build_stage2_ui()
         self._build_stage3_ui()
         self._build_stage4_ui()
         self._build_stage5_ui()
 
-        # Attempt to load settings from the default directory on startup
-        self._load_settings(self.project_dir.get())
-
-        # Create the initial viewer for the default tab
-        self._create_viewer()
-
         # Force the paned window divider line to the exact middle
         self._center_divider()
+        self.after(150, self._center_divider)
+        self.after(400, self._center_divider)
         
         self._last_geometry = self.geometry()
         self.bind("<Configure>", self._on_window_configure)
@@ -493,14 +483,7 @@ class SpkrScannerApp(tk.Tk):
         selected_idx = self.main_notebook.index(self.main_notebook.select())
         if DEBUG_MODE:
             print(f"[DEBUG] Main tab changed to index: {selected_idx}")
-        if selected_idx == 0:
-            # Switched to Grid/Planning Tab
-            self._create_viewer()
-            self.right_frame_plot.tkraise()
-        elif selected_idx == 1:
-            # Switched to Processing Tab
-            self.right_frame_processing.tkraise()
-            self._destroy_viewer()
+        self.right_frame_processing.tkraise()
 
     def _on_proc_tab_changed(self, event):
         selected_idx = self.proc_notebook.index(self.proc_notebook.select())
@@ -513,6 +496,25 @@ class SpkrScannerApp(tk.Tk):
             self.after(50, lambda: self.processing_paned_window.sashpos(0, self.processing_paned_window.winfo_height() * 3 // 4))
         else:
             self._destroy_stage5_viewer()
+            self._restore_cli_full_height()
+
+    def _restore_cli_full_height(self):
+        if DEBUG_MODE:
+            print("[DEBUG] Restoring CLI pane to full height")
+        try:
+            panes = self.processing_paned_window.panes()
+            if len(panes) >= 2:
+                self.processing_paned_window.pane(self.stage5_viewer_frame, weight=0)
+                self.processing_paned_window.pane(panes[1], weight=1)
+            self.after(50, self._set_cli_sash_top)
+        except tk.TclError:
+            pass
+
+    def _set_cli_sash_top(self):
+        try:
+            self.processing_paned_window.sashpos(0, 0)
+        except tk.TclError:
+            pass
 
     def _create_stage5_viewer(self):
         if self.stage5_viewer is not None:
@@ -528,12 +530,9 @@ class SpkrScannerApp(tk.Tk):
         dut_frame = ttk.Frame(top_bar, relief=tk.GROOVE, borderwidth=2)
         dut_frame.pack(side=tk.LEFT, fill=tk.Y)
         
-        ttk.Label(dut_frame, text="DUT (Visual Cue Only):", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(5, 10), pady=2)
+        ttk.Label(dut_frame, text="DUT Baffle:", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(5, 10), pady=2)
         
-        # Link these entries to the same variables as the main settings
-        self._add_labeled_entry(dut_frame, "Width (Y):", self.stage5_vars['dut_width_y'], 6, GUI_TOOLTIPS.get('dut_width_y'))
-        self._add_labeled_entry(dut_frame, "Depth (X):", self.stage5_vars['dut_depth_x'], 6, GUI_TOOLTIPS.get('dut_depth_x'))
-        self._add_labeled_entry(dut_frame, "Height (Z):", self.stage5_vars['dut_height_z'], 6, GUI_TOOLTIPS.get('dut_height_z'))
+        self._add_labeled_entry(dut_frame, "Depth X (mm):", self.stage5_vars['dut_depth_x'], 7, GUI_TOOLTIPS.get('dut_depth_x'))
         
         ttk.Button(top_bar, text="Save View Image", command=self._save_stage5_image).pack(side=tk.RIGHT, padx=5)
         ttk.Separator(top_bar, orient='vertical').pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=2)
@@ -588,350 +587,116 @@ class SpkrScannerApp(tk.Tk):
         except Exception as e:
             print(f"Error saving Stage 5 view image: {e}")
 
-    def _create_viewer(self):
-        if self.viewer is None:
-            self.viewer = CoordViewerEngine()
-
-            # --- 1. Create the UI Control Toolbar ---
-            self.viewer_ctrl_frame = ttk.Frame(self.right_frame_plot)
-            self.viewer_ctrl_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
-            
-            # Row 1: Scrubbing
-            row1 = ttk.Frame(self.viewer_ctrl_frame)
-            row1.pack(fill=tk.X, pady=2)
-            ttk.Label(row1, text="Scrub:").pack(side=tk.LEFT, padx=(10, 2))
-            self.viewer_slider = ttk.Scale(row1, from_=0, to=100, orient=tk.HORIZONTAL, command=lambda v: self.viewer.set_current_index(int(float(v))))
-            self.viewer_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-
-            # Row 2: VCR, Speed, Tail, History
-            row2 = ttk.Frame(self.viewer_ctrl_frame)
-            row2.pack(fill=tk.X, pady=2)
-            ttk.Button(row2, text="|<", command=self.viewer.rewind, width=3).pack(side=tk.LEFT, padx=2)
-            ttk.Button(row2, text="<", command=self.viewer.step_back, width=3).pack(side=tk.LEFT, padx=2)
-            self.btn_play = ttk.Button(row2, text="Play", command=self._toggle_viewer_play, width=6)
-            self.btn_play.pack(side=tk.LEFT, padx=2)
-            ttk.Button(row2, text=">", command=self.viewer.step_fwd, width=3).pack(side=tk.LEFT, padx=2)
-
-            ttk.Label(row2, text="Rate (PPM):").pack(side=tk.LEFT, padx=(10, 2))
-            self.ent_speed = ttk.Entry(row2, width=6)
-            self.ent_speed.insert(0, str(int(self.viewer.ppm)))
-            self.ent_speed.bind("<Return>", lambda e: self.viewer.set_speed(float(self.ent_speed.get())))
-            self.ent_speed.pack(side=tk.LEFT)
-
-            ttk.Label(row2, text="Tail Len:").pack(side=tk.LEFT, padx=(10, 2))
-            self.scl_tail = ttk.Scale(row2, from_=1, to=500, orient=tk.HORIZONTAL, command=lambda v: self.viewer.set_tail_length(int(float(v))))
-            self.scl_tail.set(self.viewer.tail_length)
-            self.scl_tail.pack(side=tk.LEFT)
-
-            self.var_hist = tk.BooleanVar(value=False)
-            ttk.Checkbutton(row2, text="Fade Hist", variable=self.var_hist, command=lambda: self.viewer.set_history_mode(self.var_hist.get())).pack(side=tk.LEFT, padx=10)
-
-            # Row 3: Views, Visuals, Rotation
-            row3 = ttk.Frame(self.viewer_ctrl_frame)
-            row3.pack(fill=tk.X, pady=2)
-            ttk.Button(row3, text="Top", command=lambda: self.viewer.set_view(90, 0)).pack(side=tk.LEFT, padx=2)
-            ttk.Button(row3, text="Front", command=lambda: self.viewer.set_view(0, 0)).pack(side=tk.LEFT, padx=2)
-            ttk.Button(row3, text="Side", command=lambda: self.viewer.set_view(0, -90)).pack(side=tk.LEFT, padx=2)
-
-            ttk.Label(row3, text="Color:").pack(side=tk.LEFT, padx=(10, 2))
-            self.scl_col = ttk.Scale(row3, from_=0.0, to=1.0, orient=tk.HORIZONTAL, command=lambda v: self.viewer.set_color(float(v)))
-            self.scl_col.pack(side=tk.LEFT)
-
-            ttk.Label(row3, text="Opacity:").pack(side=tk.LEFT, padx=(10, 2))
-            self.scl_alpha = ttk.Scale(row3, from_=0.0, to=1.0, orient=tk.HORIZONTAL, command=lambda v: self.viewer.set_alpha(float(v)))
-            self.scl_alpha.set(0.2)
-            self.scl_alpha.pack(side=tk.LEFT)
-
-            self.var_ortho = tk.BooleanVar(value=False)
-            ttk.Checkbutton(row3, text="Ortho", variable=self.var_ortho, command=lambda: self.viewer.set_ortho(self.var_ortho.get())).pack(side=tk.LEFT, padx=10)
-
-            ttk.Label(row3, text="Rot Ang:").pack(side=tk.LEFT)
-            self.ent_rot = ttk.Entry(row3, width=5)
-            self.ent_rot.insert(0, "45")
-            self.ent_rot.pack(side=tk.LEFT)
-
-            self.btn_rot = ttk.Button(row3, text="Rotate", command=self._toggle_viewer_rotation)
-            self.btn_rot.pack(side=tk.LEFT, padx=5)
-
-            # --- 2. Pack the Canvas ---
-            note_text = "Note: Left mouse click to drag view, middle mouse click to shift view, right mouse click to zoom."
-            self.lbl_viewer_note = ttk.Label(self.right_frame_plot, text=note_text, font=("Arial", 8, "italic"))
-            self.lbl_viewer_note.pack(side=tk.TOP, pady=(5, 0))
-
-            # Create a dedicated container frame to prevent the canvas from overlapping siblings on Linux
-            self.viewer_canvas_frame = ttk.Frame(self.right_frame_plot)
-            self.viewer_canvas_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-            if DEBUG_MODE:
-                print("[DEBUG] Creating Grid/Planning 3D Viewer canvas")
-            self.canvas_viewer = FigureCanvasTkAgg(self.viewer.fig, master=self.viewer_canvas_frame)
-            self.canvas_viewer.draw()
-            self.canvas_viewer.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-            
-            # --- 3. Reload Data ---
-            if self.planned_data is not None:
-                self.viewer.load_data(self.planned_data)
-                self._update_viewer_slider_range()
-            elif self.grid_data is not None:
-                self.viewer.load_data(self.grid_data)
-                self._update_viewer_slider_range()
-            else:
-                proj_name = self.project_name.get().strip() or "project"
-                candidate_path = os.path.join(self.project_dir.get(), f"{proj_name}_scan_path.csv")
-                if os.path.exists(candidate_path):
-                    try:
-                        self.viewer.load_data(candidate_path)
-                        self._update_viewer_slider_range()
-                    except Exception as e:
-                        print(f"Note: Could not auto-reload path file on tab switch: {e}")
-                        
-            # Start UI sync loop
-            self._sync_viewer_ui()
-
-    def _toggle_viewer_play(self):
-        if self.viewer.is_playing:
-            self.viewer.pause()
-            self.btn_play.config(text="Play")
-        else:
-            self.viewer.play()
-            self.btn_play.config(text="Pause")
-
-    def _toggle_viewer_rotation(self):
-        if self.viewer.is_rotating:
-            self.viewer.stop_rotation()
-            self.btn_rot.config(text="Rotate")
-        else:
-            try: angle = float(self.ent_rot.get())
-            except ValueError: angle = 45.0
-            self.viewer.start_rotation(angle)
-            self.btn_rot.config(text="Stop Rot")
-            
-    def _update_viewer_slider_range(self):
-        if self.viewer and hasattr(self, 'viewer_slider'):
-            max_idx = max(0, self.viewer.N - 1)
-            self.viewer_slider.config(to=max_idx)
-
-    def _sync_viewer_ui(self):
-        if self.viewer:
-            # Sync slider while playing
-            if self.viewer.is_playing and self.viewer_slider.get() != self.viewer.curr_idx:
-                self.viewer_slider.set(self.viewer.curr_idx)
-            # Reset Play button if it finished naturally
-            if not self.viewer.is_playing and self.btn_play['text'] == "Pause":
-                self.btn_play.config(text="Play")
-            self.after(50, self._sync_viewer_ui)
-
-    def _destroy_viewer(self):
-        if self.viewer is not None:
-            try:
-                if hasattr(self.viewer, 'anim') and self.viewer.anim is not None:
-                    self.viewer.anim.event_source.stop()
-                if hasattr(self.viewer, 'rot_anim') and self.viewer.rot_anim is not None:
-                    self.viewer.rot_anim.event_source.stop()
-                
-                if DEBUG_MODE:
-                    print("[DEBUG] Destroying Grid/Planning 3D Viewer canvas")
-                self.canvas_viewer.get_tk_widget().destroy()
-                plt.close(self.viewer.fig)
-            except Exception as e:
-                print(f"Note: Could not cleanly destroy viewer: {e}")
-            finally:
-                if hasattr(self, 'viewer_ctrl_frame') and self.viewer_ctrl_frame.winfo_exists():
-                    self.viewer_ctrl_frame.destroy()
-                if hasattr(self, 'lbl_viewer_note') and self.lbl_viewer_note.winfo_exists():
-                    self.lbl_viewer_note.destroy()
-                if hasattr(self, 'viewer_canvas_frame') and self.viewer_canvas_frame.winfo_exists():
-                    self.viewer_canvas_frame.destroy()
-                self.viewer, self.canvas_viewer = None, None
-
-    def _build_grid_ops_ui(self):
+    def _build_project_metadata_ui(self):
         self.grid_vars = {}
-        
-        # --- Scrollable Setup ---
-        canvas = tk.Canvas(self.tab_grid_ops, highlightthickness=0)
-        self.canvas = canvas
-        scrollbar = ttk.Scrollbar(self.tab_grid_ops, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        main_container = ttk.Frame(canvas, padding="10")
-        canvas_window = canvas.create_window((0, 0), window=main_container, anchor="nw")
-        
-        def on_canvas_configure(event):
-            canvas.itemconfig(canvas_window, width=event.width)
-            bbox = canvas.bbox("all")
-            if bbox:
-                canvas.configure(scrollregion=(0, 0, bbox[2], max(bbox[3], event.height)))
+        self.user_positions = []
 
-        def on_frame_configure(event):
-            bbox = canvas.bbox("all")
-            if bbox:
-                canvas.configure(scrollregion=(0, 0, bbox[2], max(bbox[3], canvas.winfo_height())))
+        main_container = ttk.Frame(self.tab_project_meta, padding="10")
+        main_container.pack(fill=tk.BOTH, expand=True)
 
-        canvas.bind("<Configure>", on_canvas_configure)
-        main_container.bind("<Configure>", on_frame_configure)
-        
-        # Mouse wheel scrolling support
-        def _on_mousewheel(event):
-            # Prevent scrolling if all content is already visible
-            if canvas.yview() == (0.0, 1.0):
-                return
-            if getattr(event, 'num', 0) == 4:
-                canvas.yview_scroll(-1, "units")
-            elif getattr(event, 'num', 0) == 5:
-                canvas.yview_scroll(1, "units")
-            else:
-                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-                
-        canvas.bind("<Enter>", lambda e: [canvas.bind_all("<MouseWheel>", _on_mousewheel), canvas.bind_all("<Button-4>", _on_mousewheel), canvas.bind_all("<Button-5>", _on_mousewheel)])
-        canvas.bind("<Leave>", lambda e: [canvas.unbind_all("<MouseWheel>"), canvas.unbind_all("<Button-4>"), canvas.unbind_all("<Button-5>")])
-        # ------------------------
+        meta_frame = ttk.LabelFrame(main_container, text="Imported Project Reference Points", padding="10")
+        meta_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
 
-        # --- Geometry ---
-        geom_frame = ttk.LabelFrame(main_container, text="Geometry", padding="10")
-        geom_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
-        
-        geom_left = ttk.Frame(geom_frame); geom_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
-        geom_right = ttk.Frame(geom_frame); geom_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
-        
-        self.grid_vars['cyl_radius_mm'] = self._add_form_entry(geom_left, "Cylinder Internal Radius (mm):", "200.0", "Cylinder internal radius (mm)")
-        self.grid_vars['cyl_height_mm'] = self._add_form_entry(geom_left, "Cylinder Internal Height (mm):", "500.0", "Cylinder internal height (mm)")
-        self.grid_vars['num_points'] = self._add_form_entry(geom_right, "Total Points:", "1000", "Total points for the generated grid (forward + reverse spirals combined)")
-        self.grid_vars['azimuth_density_ratio'] = self._add_form_entry(geom_right, "Azimuth Density Ratio:", "1.0", "Front-to-back point density ratio. 1.0 = uniform. 5.0 = front is 5x denser than back.\nSmaller values (2.0 - 10.0) create a wide, smooth fade.\nLarge values (>20) create a narrow band.")
+        self.grid_vars['output_filename'] = tk.StringVar(value=f"{self.project_name.get()}_grid.csv")
 
-        # --- Keep Out ---
-        ko_frame = ttk.LabelFrame(main_container, text="Keep Out", padding="10")
-        ko_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
-        
-        ko_left = ttk.Frame(ko_frame); ko_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
-        ko_right = ttk.Frame(ko_frame); ko_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
-        
-        self.grid_vars['phi_min_deg'] = self._add_form_entry(ko_left, "Phi Min (deg):", "-170.0", "Phi cut limits (degrees, cylindrical azimuth)")
-        self.grid_vars['phi_max_deg'] = self._add_form_entry(ko_right, "Phi Max (deg):", "170.0", "Phi cut limits (degrees, cylindrical azimuth)")
-        self.grid_vars['bottom_cutoff_mm'] = self._add_form_entry(ko_left, "Bottom Cutoff (mm):", "30.0", "Remove bottom-cap points within this radius from center (mm) for support pole")
+        ttk.Label(meta_frame, text="Point", font=("Arial", 8, "bold")).grid(row=0, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+        ttk.Label(meta_frame, text="Radius (r_mm)", font=("Arial", 8, "bold")).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(meta_frame, text="Azimuth (phi_deg)", font=("Arial", 8, "bold")).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(meta_frame, text="Height (z_mm)", font=("Arial", 8, "bold")).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
 
-        # --- Path Plan ---
-        plan_frame = ttk.LabelFrame(main_container, text="Path Plan", padding="10")
-        plan_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
-        self.grid_vars['delta_theta_deg'] = self._add_form_entry(plan_frame, "Delta Theta (deg):", "7.5", "θ-bin width (deg). Smaller -> more bins, smoother θ progression.")
-
-        # --- Advanced Options ---
-        self.btn_advanced = ttk.Button(main_container, text="Show Advanced Settings ▼", command=self._toggle_advanced)
-        self.btn_advanced.pack(side=tk.TOP, pady=10)
-
-        self.adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
-        
-        adv_cols_frame = ttk.Frame(self.adv_frame)
-        adv_cols_frame.pack(side=tk.TOP, fill=tk.X, expand=True)
-        
-        adv_left = ttk.Frame(adv_cols_frame); adv_left.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
-        adv_right = ttk.Frame(adv_cols_frame); adv_right.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, anchor=tk.N)
-        
-        self.grid_vars['wall_thickness_mm'] = self._add_form_entry(adv_left, "Wall Thickness (mm):", "50.0", "The maximum distance points can be pulled outwards (D_max)")
-        self.grid_vars['cap_fraction'] = self._add_form_entry(adv_right, "Cap Fraction (0-1 or 'Auto'):", "Auto", "Fraction of points on both end-caps combined. None = Auto (end cap to side wall area based). 0-1 = Manually enter a fraction.")
-        self.grid_vars['P_side'] = self._add_form_entry(adv_left, "P_side (Pull Power):", "0.5", "Magnetic pull bias on cylinder sides - >0.5")
-        self.grid_vars['P_caps'] = self._add_form_entry(adv_right, "P_caps (Pull Power):", "0.8", "Power for magnetic pull on cylinder caps")
-        self.grid_vars['cap_tol_mm'] = self._add_form_entry(adv_left, "Cap Tolerance (mm):", "Auto: wall_thickness_mm + 1mm", "Points within ±CAP_TOL_MM of min/max z are treated as caps (top/bottom).")
-        self.grid_vars['azimuth_weight_center_deg'] = self._add_form_entry(adv_right, "Azimuth Weight Center (deg):", "0.0", "Angle (deg) for the center of the high-density zone.")
-        self.grid_vars['z_rotation_deg'] = self._add_form_entry(adv_left, "Z Rotation 2nd Spiral (deg):", "90.0", "Rotate second spiral around Z (deg)")
-        self.grid_vars['side_snake_start'] = self._add_combobox(adv_right, "Side Snake Start:", ["up", "down"], "up", "Initial z traversal direction for sidewall bins: 'up' or 'down'.")
-        
-        cb_frame_container = ttk.Frame(self.adv_frame)
-        cb_frame_container.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        
-        cb_frame1 = ttk.Frame(cb_frame_container); cb_frame1.pack(anchor=tk.W, pady=2)
-        self.grid_vars['generate_reverse_spiral'] = self._add_checkbutton(cb_frame1, "Generate Reverse Spiral", True, "Make second (reverse) spiral")
-        
-        cb_frame2 = ttk.Frame(cb_frame_container); cb_frame2.pack(anchor=tk.W, pady=2)
-        self.grid_vars['flip_poles'] = self._add_checkbutton(cb_frame2, "Flip Poles (2nd Spiral)", False, "Flip Z sign of second spiral")
-        
-        cb_frame3 = ttk.Frame(cb_frame_container); cb_frame3.pack(anchor=tk.W, pady=2)
-        self.grid_vars['z_midpoint_zero'] = self._add_checkbutton(cb_frame3, "Z Midpoint = 0", True, "True = Z axis centred at 0 mm (equal negative and positive values).\nFalse = Z axis all positive like physical robot axis.")
-
-        # --- Physical Waypoints ---
-        ttk.Label(self.adv_frame, text="Physical Waypoints (Optional):", font=("Arial", 9, "bold")).pack(side=tk.TOP, anchor=tk.W, pady=(15, 5))
-        
-        wp_frame = ttk.Frame(self.adv_frame)
-        wp_frame.pack(side=tk.TOP, fill=tk.X, padx=5)
-
-        ttk.Label(wp_frame, text="Waypoint", font=("Arial", 8, "bold")).grid(row=0, column=0, sticky=tk.W, padx=(0, 10), pady=2)
-        ttk.Label(wp_frame, text="Radius (r_mm)", font=("Arial", 8, "bold")).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
-        ttk.Label(wp_frame, text="Azimuth (phi_deg)", font=("Arial", 8, "bold")).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
-        ttk.Label(wp_frame, text="Height (z_mm)", font=("Arial", 8, "bold")).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
-
-        def _update_cyl_dims_from_waypoints(event=None):
-            try:
-                if 'wp_top_r' in self.grid_vars:
-                    top_r_str = self.grid_vars['wp_top_r'].get().strip()
-                    if top_r_str:
-                        self.grid_vars['cyl_radius_mm'].set(f"{float(top_r_str):.1f}")
-            except ValueError:
-                pass
-
-            try:
-                if 'wp_top_z' in self.grid_vars and 'wp_bot_z' in self.grid_vars:
-                    top_z_str = self.grid_vars['wp_top_z'].get().strip()
-                    bot_z_str = self.grid_vars['wp_bot_z'].get().strip()
-                    if top_z_str and bot_z_str:
-                        height_mm = abs(float(top_z_str) - float(bot_z_str))
-                        self.grid_vars['cyl_height_mm'].set(f"{height_mm:.1f}")
-            except ValueError:
-                pass
-
-            try:
-                if 'wp_bot_r' in self.grid_vars:
-                    bot_r_str = self.grid_vars['wp_bot_r'].get().strip()
-                    if bot_r_str:
-                        self.grid_vars['bottom_cutoff_mm'].set(f"{float(bot_r_str):.1f}")
-            except ValueError:
-                pass
-
-        def _add_wp_entry(row, col, default_val):
-            var = tk.StringVar(value=default_val)
-            entry = ttk.Entry(wp_frame, textvariable=var, width=12)
+        def _add_wp_entry(row, col):
+            var = tk.StringVar(value="")
+            entry = ttk.Entry(meta_frame, textvariable=var, width=12)
             entry.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
-            entry.bind("<FocusOut>", _update_cyl_dims_from_waypoints)
-            entry.bind("<Return>", _update_cyl_dims_from_waypoints)
+            entry.bind("<FocusOut>", self._on_project_metadata_changed)
+            entry.bind("<Return>", self._on_project_metadata_changed)
             return var
 
-        lbl_top = ttk.Label(wp_frame, text="Top Critical:")
-        lbl_top.grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=2)
-        ToolTip(lbl_top, "Overrides cylinder radius and height.")
-        self.grid_vars['wp_top_r']   = _add_wp_entry(1, 1, "")
-        self.grid_vars['wp_top_phi'] = _add_wp_entry(1, 2, "")
-        self.grid_vars['wp_top_z']   = _add_wp_entry(1, 3, "")
+        for row, label, prefix in [
+            (1, "Top Critical:", "top"),
+            (2, "Bottom Critical:", "bot"),
+            (3, "Tweeter:", "tw"),
+            (4, "Reference Origin:", "ref_origin"),
+            (5, "Baffle Bottom L:", "baffle_bl"),
+            (6, "Baffle Top L:", "baffle_tl"),
+            (7, "Baffle Top R:", "baffle_tr"),
+        ]:
+            ttk.Label(meta_frame, text=label).grid(row=row, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+            self.grid_vars[f'wp_{prefix}_r'] = _add_wp_entry(row, 1)
+            self.grid_vars[f'wp_{prefix}_phi'] = _add_wp_entry(row, 2)
+            self.grid_vars[f'wp_{prefix}_z'] = _add_wp_entry(row, 3)
 
-        lbl_bot = ttk.Label(wp_frame, text="Bottom Critical:")
-        lbl_bot.grid(row=2, column=0, sticky=tk.W, padx=(0, 10), pady=2)
-        ToolTip(lbl_bot, "Overrides bottom cutoff.")
-        self.grid_vars['wp_bot_r']   = _add_wp_entry(2, 1, "")
-        self.grid_vars['wp_bot_phi'] = _add_wp_entry(2, 2, "")
-        self.grid_vars['wp_bot_z']   = _add_wp_entry(2, 3, "")
+        add_frame = ttk.LabelFrame(main_container, text="User Positions", padding="10")
+        add_frame.pack(side=tk.TOP, fill=tk.X, pady=(8, 5))
+        self.user_positions_frame = add_frame
+        self._refresh_user_positions_view()
 
-        lbl_tw = ttk.Label(wp_frame, text="Tweeter:")
-        lbl_tw.grid(row=3, column=0, sticky=tk.W, padx=(0, 10), pady=2)
-        ToolTip(lbl_tw, "Optional metadata for downstream acoustic origin optimization.")
-        self.grid_vars['wp_tw_r']    = _add_wp_entry(3, 1, "")
-        self.grid_vars['wp_tw_phi']  = _add_wp_entry(3, 2, "")
-        self.grid_vars['wp_tw_z']    = _add_wp_entry(3, 3, "")
+        metadata_note = ttk.Label(
+            main_container,
+            text="Note: These values are imported from the upstream project JSON/CSV and are used by Stage 2 and the Stage 5 preview.",
+            font=("Arial", 9, "italic")
+        )
+        metadata_note.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(8, 0))
+        main_container.bind("<Configure>", lambda e, lbl=metadata_note: lbl.configure(wraplength=max(240, e.width - 24)), add="+")
 
-        # --- Buttons ---
-        self.btn_frame = ttk.Frame(main_container)
-        self.btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-        
-        ttk.Button(self.btn_frame, text="Generate & Plan Path", command=self._action_generate_and_plan).pack(side=tk.LEFT, padx=10)
-        ttk.Button(self.btn_frame, text="Reset Replay", command=self._action_reset_replay).pack(side=tk.LEFT, padx=10)
+    def _on_project_metadata_changed(self, event=None):
+        self._sync_upstream_project_fields()
 
-    def _toggle_advanced(self):
-        if self.adv_frame.winfo_ismapped():
-            self.adv_frame.pack_forget()
-            self.btn_advanced.config(text="Show Advanced Settings ▼")
-            self.canvas.yview_moveto(0)
-        else:
-            self.adv_frame.pack(side=tk.TOP, fill=tk.X, pady=5, before=self.btn_frame)
-            self.btn_advanced.config(text="Hide Advanced Settings ▲")
+    def _refresh_user_positions_view(self):
+        frame = getattr(self, 'user_positions_frame', None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        self.user_position_display_vars = []
+
+        ttk.Label(frame, text="Point", font=("Arial", 8, "bold")).grid(row=0, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+        ttk.Label(frame, text="Radius (r_mm)", font=("Arial", 8, "bold")).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(frame, text="Azimuth (phi_deg)", font=("Arial", 8, "bold")).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(frame, text="Height (z_mm)", font=("Arial", 8, "bold")).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+
+        positions = getattr(self, 'user_positions', []) or []
+        if not positions:
+            ttk.Label(frame, text="None").grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+            return
+
+        def add_value(row, col, value):
+            var = tk.StringVar(value=value)
+            self.user_position_display_vars.append(var)
+            entry = ttk.Entry(frame, textvariable=var, width=12, state="readonly")
+            entry.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+
+        for row, pos in enumerate(positions, start=1):
+            try:
+                name = str(pos.get('name', '')).strip() or "User Position"
+                r = float(pos.get('r'))
+                phi = float(pos.get('phi'))
+                z = float(pos.get('z'))
+                ttk.Label(frame, text=f"{name}:").grid(row=row, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+                add_value(row, 1, f"{r:.3f}")
+                add_value(row, 2, f"{phi:.3f}")
+                add_value(row, 3, f"{z:.3f}")
+            except Exception:
+                continue
+
+    def _coerce_user_positions(self, value):
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                import ast
+                parsed = ast.literal_eval(value)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        return []
+
+    def _user_positions_from_mapping(self, mapping):
+        for key in ('user_positions', 'User_positions'):
+            positions = self._coerce_user_positions(mapping.get(key))
+            if positions:
+                return positions
+        return []
 
     def _add_form_entry(self, parent, label_text, default_val, help_text=None, state_var=None):
         lbl_frame = ttk.Frame(parent)
@@ -1009,8 +774,26 @@ class SpkrScannerApp(tk.Tk):
                 print(f"[DEBUG] Browsed and selected project directory: {directory}")
                 self._log_directory_tree(directory, "New Project Directory Listing")
             self.project_dir.set(directory)
-            self._load_settings(directory)
-            
+            self._load_settings(directory, notify_metadata=True)
+
+    def _find_stage1_ir_dir(self, project_dir):
+        expected_names = ("measurement_set", "recordings")
+        try:
+            entries = os.listdir(project_dir)
+        except OSError:
+            entries = []
+
+        for expected in expected_names:
+            exact_path = os.path.join(project_dir, expected)
+            if os.path.isdir(exact_path):
+                return exact_path
+            for entry in entries:
+                candidate = os.path.join(project_dir, entry)
+                if entry.lower() == expected and os.path.isdir(candidate):
+                    return candidate
+
+        return os.path.join(project_dir, expected_names[0])
+
     def _browse_stage5_output_dir(self):
         directory = filedialog.askdirectory(initialdir=self.project_dir.get(), title="Select Output Directory")
         if directory:
@@ -1086,14 +869,19 @@ class SpkrScannerApp(tk.Tk):
                 except Exception as e:
                     print(f"Warning: Could not read mic cal file for fallback: {e}")
 
+        grid_settings = {k: v.get() for k, v in self.grid_vars.items()}
+        if hasattr(self, 'user_positions'):
+            grid_settings['user_positions'] = self.user_positions
+
         settings = {
             "project_name": self.project_name.get(),
-            "grid_vars": {k: v.get() for k, v in self.grid_vars.items()},
+            "grid_vars": grid_settings,
             "stage1_vars": {k: v.get() for k, v in getattr(self, 'stage1_vars', {}).items()},
             "stage2_vars": {k: v.get() for k, v in getattr(self, 'stage2_vars', {}).items()},
             "stage3_vars": {k: v.get() for k, v in getattr(self, 'stage3_vars', {}).items()},
             "stage4_vars": {k: v.get() for k, v in getattr(self, 'stage4_vars', {}).items()},
             "stage5_vars": {k: v.get() for k, v in getattr(self, 'stage5_vars', {}).items()},
+            "stage5_gui_units": "mm",
             "stage4_manual_table": {str(k): v for k, v in getattr(self, 'stage4_manual_table', {}).items()},
             "mic_cal_fallback": fallback_content
         }
@@ -1110,7 +898,7 @@ class SpkrScannerApp(tk.Tk):
         except Exception as e:
             print(f"Warning: Failed to save project settings: {e}")
 
-    def _load_settings(self, directory):
+    def _load_settings(self, directory, notify_metadata=True):
         proj_name = self.project_name.get().strip() or "scanner"
         load_path = os.path.join(directory, f"{proj_name}_project.json")
         
@@ -1141,11 +929,13 @@ class SpkrScannerApp(tk.Tk):
                     self.project_name.set(settings["project_name"])
                 if "grid_vars" in settings:
                     for k, v in settings["grid_vars"].items():
-                        if k in self.grid_vars:
+                        if k in getattr(self, 'grid_vars', {}):
                             if isinstance(self.grid_vars[k], tk.BooleanVar):
                                 self.grid_vars[k].set(bool(v))
                             else:
                                 self.grid_vars[k].set(str(v))
+                    self.user_positions = self._user_positions_from_mapping(settings["grid_vars"])
+                    self._refresh_user_positions_view()
                 if "stage1_vars" in settings:
                     for k, v in settings["stage1_vars"].items():
                         if k in getattr(self, 'stage1_vars', {}):
@@ -1178,6 +968,8 @@ class SpkrScannerApp(tk.Tk):
                             else:
                                 self.stage4_vars[k].set(str(v))
                 if "stage5_vars" in settings:
+                    loaded_stage5_keys = set(settings.get("stage5_vars", {}))
+                    stage5_gui_units = settings.get("stage5_gui_units", "m")
                     for k, v in settings["stage5_vars"].items():
                         if k in getattr(self, 'stage5_vars', {}):
                             if isinstance(self.stage5_vars[k], tk.BooleanVar):
@@ -1187,8 +979,11 @@ class SpkrScannerApp(tk.Tk):
                                 if k == 'subtract_tof':
                                     if val == "True" or val == "Grid Origin": val = "Ref Origin"
                                     elif val == "False": val = "Off"
+                                if stage5_gui_units != "mm" and k in {'offset_mic_x', 'offset_mic_y', 'offset_mic_z', 'dut_depth_x'}:
+                                    val = self._m_to_mm_text(val)
                                 self.stage5_vars[k].set(val)
                     self.stage5_manual_coords = settings.get("stage5_vars", {}).get("manual_coord_list", [])
+                    self._default_dut_depth_from_baffle(force=('dut_depth_x' not in loaded_stage5_keys))
                 if "stage4_manual_table" in settings:
                     self.stage4_manual_table = {float(k): int(v) for k, v in settings["stage4_manual_table"].items()}
 
@@ -1199,126 +994,435 @@ class SpkrScannerApp(tk.Tk):
                     
                 if hasattr(self, '_check_mic_cal_status'):
                     self._check_mic_cal_status()
+                if notify_metadata:
+                    self._reconcile_project_folder_metadata(project_exists=True, notify=True)
+                self._sync_upstream_project_fields()
 
             except Exception as e:
                 print(f"Warning: Failed to load project settings: {e}")
-
-    def _action_generate_and_plan(self):
-        try:
-            if DEBUG_MODE:
-                print("[DEBUG] Action: Generate & Plan Path")
-            self._save_project_if_not_exists()
-            proj_name = self.project_name.get().strip() or "project"
-            
-            # Auto-fill empty numerical fields with "0" to prevent float conversion crashes
-            fields_to_zero = [
-                'cyl_radius_mm', 'cyl_height_mm', 'num_points', 'wall_thickness_mm',
-                'bottom_cutoff_mm', 'P_side', 'P_caps', 'z_rotation_deg',
-                'phi_min_deg', 'phi_max_deg', 'azimuth_density_ratio',
-                'azimuth_weight_center_deg', 'delta_theta_deg'
-            ]
-            for key in fields_to_zero:
-                if key in self.grid_vars and not self.grid_vars[key].get().strip():
-                    self.grid_vars[key].set("0")
-
-            # Parse variables safely
-            cap_str = self.grid_vars['cap_fraction'].get().strip()
-            cap_frac = None if cap_str.lower() in ("auto", "none", "") else float(cap_str)
-            
-            def get_wp_tuple(prefix):
-                r_str = self.grid_vars.get(f'wp_{prefix}_r', tk.StringVar(value="")).get().strip()
-                phi_str = self.grid_vars.get(f'wp_{prefix}_phi', tk.StringVar(value="")).get().strip()
-                z_str = self.grid_vars.get(f'wp_{prefix}_z', tk.StringVar(value="")).get().strip()
-                if not r_str and not phi_str and not z_str:
-                    return None
-                
-                r_str = r_str if r_str else "0.0"
-                phi_str = phi_str if phi_str else "0.0"
-                z_str = z_str if z_str else "0.0"
-                
-                try:
-                    return (float(r_str), float(phi_str), float(z_str))
-                except ValueError:
-                    print(f"Warning: Incomplete or invalid {prefix} waypoint provided. Ignoring.")
-                    return None
-
-            top_pos = get_wp_tuple('top')
-            bot_pos = get_wp_tuple('bot')
-            tw_pos = get_wp_tuple('tw')
-
-            gen_params = {
-                'cyl_radius_mm': float(self.grid_vars['cyl_radius_mm'].get()),
-                'cyl_height_mm': float(self.grid_vars['cyl_height_mm'].get()),
-                'num_points': int(self.grid_vars['num_points'].get()),
-                'wall_thickness_mm': float(self.grid_vars['wall_thickness_mm'].get()),
-                'bottom_cutoff_mm': float(self.grid_vars['bottom_cutoff_mm'].get()),
-                'cap_fraction': cap_frac,
-                'P_side': float(self.grid_vars['P_side'].get()),
-                'P_caps': float(self.grid_vars['P_caps'].get()),
-                'generate_reverse_spiral': self.grid_vars['generate_reverse_spiral'].get(),
-                'z_rotation_deg': float(self.grid_vars['z_rotation_deg'].get()),
-                'flip_poles': self.grid_vars['flip_poles'].get(),
-                'z_midpoint_zero': self.grid_vars['z_midpoint_zero'].get(),
-                'phi_min_deg': float(self.grid_vars['phi_min_deg'].get()),
-                'phi_max_deg': float(self.grid_vars['phi_max_deg'].get()),
-                'azimuth_density_ratio': float(self.grid_vars['azimuth_density_ratio'].get()),
-                'azimuth_weight_center_deg': float(self.grid_vars['azimuth_weight_center_deg'].get()),
-                'top_crit_pos': top_pos,
-                'bot_crit_pos': bot_pos,
-                'tweeter_pos': tw_pos
-            }
-
-            self.grid_data = generate_measurement_grid(**gen_params)
-
-            # Path Plan immediately
-            cap_tol_str = self.grid_vars['cap_tol_mm'].get().strip()
-            if cap_tol_str.lower().startswith('auto') or cap_tol_str == '':
-                cap_tol_mm = float(self.grid_vars['wall_thickness_mm'].get()) + 1.0
-            else:
-                cap_tol_mm = float(cap_tol_str)
-
-            plan_params = {
-                'input_data': self.grid_data,
-                'cap_tol_mm': cap_tol_mm,
-                'delta_theta_deg': float(self.grid_vars['delta_theta_deg'].get()),
-                'side_snake_start': self.grid_vars['side_snake_start'].get(),
-                'output_path': os.path.join(self.project_dir.get(), f"{proj_name}_scan_path.csv"),
-                'show_replay': False
-            }
-
-            self.planned_data = plan_path(**plan_params)
-            
-            # Live update the viewer
-            if self.planned_data is not None:
-                self.viewer.load_data(self.planned_data)
-            else:
-                self.viewer.load_data(plan_params['output_path'])
-            self._update_viewer_slider_range()
-
-            self.status_var.set(f"Success: Grid generated and path planned successfully. Saved to: {plan_params['output_path']}")
-
-        except Exception as e:
-            self.status_var.set(f"Error: Failed to generate and plan path: {str(e)}")
-
-    def _action_reset_replay(self):
-        if DEBUG_MODE:
-            print("[DEBUG] Action: Reset Replay")
-        if self.viewer and self.viewer.N > 0:
-            self.viewer.rewind()
         else:
-            # Try loading from disk
-            proj_name = self.project_name.get().strip() or "project"
-            candidate_path = os.path.join(self.project_dir.get(), f"{proj_name}_scan_path.csv")
-            if os.path.exists(candidate_path):
-                try:
-                    if self.viewer:
-                        self.viewer.load_data(candidate_path)
-                        self._update_viewer_slider_range()
-                    self.status_var.set(f"Loaded planned path from: {candidate_path}")
-                except Exception as e:
-                    self.status_var.set(f"Error: Failed to load planned path from file: {str(e)}")
-            else:
-                self.status_var.set("Warning: No Data. Please generate and plan the path first.")
+            if notify_metadata:
+                self._reconcile_project_folder_metadata(project_exists=False, notify=True)
+            self._refresh_user_positions_view()
+            self._sync_upstream_project_fields()
+
+    def _cyl_mm_to_xyz_mm(self, r_mm, phi_deg, z_mm):
+        import math
+        r = float(r_mm)
+        ph = math.radians(float(phi_deg))
+        return (r * math.cos(ph), r * math.sin(ph), float(z_mm))
+
+    def _grid_value(self, key):
+        var = getattr(self, 'grid_vars', {}).get(key)
+        return var.get().strip() if var is not None else ""
+
+    def _m_to_mm_text(self, value, decimals=3):
+        try:
+            return f"{float(value) * 1000.0:.{decimals}f}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _mm_to_m(self, value):
+        return float(value) / 1000.0
+
+    def _stage5_offset_m(self):
+        return (
+            self._mm_to_m(self.stage5_vars['offset_mic_x'].get()),
+            self._mm_to_m(self.stage5_vars['offset_mic_y'].get()),
+            self._mm_to_m(self.stage5_vars['offset_mic_z'].get()),
+        )
+
+    def _sync_upstream_project_fields(self):
+        ref_origin_set = False
+        try:
+            tw_r = self._grid_value('wp_tw_r')
+            tw_phi = self._grid_value('wp_tw_phi')
+            tw_z = self._grid_value('wp_tw_z')
+            if tw_r and tw_phi and tw_z and hasattr(self, 'stage2_vars'):
+                x_mm, y_mm, z_mm = self._cyl_mm_to_xyz_mm(tw_r, tw_phi, tw_z)
+                self.stage2_vars['tweeter_x'].set(f"{x_mm:.3f}")
+                self.stage2_vars['tweeter_y'].set(f"{y_mm:.3f}")
+                self.stage2_vars['tweeter_z'].set(f"{z_mm:.3f}")
+        except Exception as e:
+            print(f"Warning: Could not import tweeter position from project file: {e}")
+
+        try:
+            if hasattr(self, 'stage5_vars'):
+                ref_r = self._grid_value('wp_ref_origin_r')
+                ref_phi = self._grid_value('wp_ref_origin_phi')
+                ref_z = self._grid_value('wp_ref_origin_z')
+                if ref_r and ref_phi and ref_z:
+                    x_mm, y_mm, z_mm = self._cyl_mm_to_xyz_mm(ref_r, ref_phi, ref_z)
+                    ref_origin_set = True
+                else:
+                    x_mm, y_mm, z_mm = self._cyl_mm_to_xyz_mm(tw_r, tw_phi, tw_z)
+                self.stage5_vars['offset_mic_x'].set(f"{x_mm:.3f}")
+                self.stage5_vars['offset_mic_y'].set(f"{y_mm:.3f}")
+                self.stage5_vars['offset_mic_z'].set(f"{z_mm:.3f}")
+        except Exception as e:
+            if ref_origin_set:
+                print(f"Warning: Could not import reference origin from project file: {e}")
+
+        self._default_dut_depth_from_baffle()
+
+        if hasattr(self, '_schedule_update_stage5_preview'):
+            self._schedule_update_stage5_preview()
+
+    def _reference_metadata_keys(self):
+        keys = []
+        for prefix in ['top', 'bot', 'tw', 'ref_origin', 'baffle_bl', 'baffle_tl', 'baffle_tr']:
+            for field in ['r', 'phi', 'z']:
+                keys.append(f'wp_{prefix}_{field}')
+        return keys
+
+    def _get_project_baffle_width_m(self):
+        try:
+            tl = (
+                self._grid_value('wp_baffle_tl_r'),
+                self._grid_value('wp_baffle_tl_phi'),
+                self._grid_value('wp_baffle_tl_z'),
+            )
+            tr = (
+                self._grid_value('wp_baffle_tr_r'),
+                self._grid_value('wp_baffle_tr_phi'),
+                self._grid_value('wp_baffle_tr_z'),
+            )
+            if not all(tl + tr):
+                return None
+
+            tl_xyz = self._cyl_mm_to_xyz_mm(*tl)
+            tr_xyz = self._cyl_mm_to_xyz_mm(*tr)
+            import math
+            width_m = math.dist(tl_xyz, tr_xyz) / 1000.0
+            return width_m if width_m > 0 else None
+        except Exception:
+            return None
+
+    def _default_dut_depth_from_baffle(self, force=False):
+        if not hasattr(self, 'stage5_vars') or 'dut_depth_x' not in self.stage5_vars:
+            return
+        width_m = self._get_project_baffle_width_m()
+        if width_m is None:
+            return
+        current = self.stage5_vars['dut_depth_x'].get().strip()
+        try:
+            current_val = float(current) if current else 0.0
+        except ValueError:
+            current_val = 0.0
+        if force or current_val <= 0.0:
+            self.stage5_vars['dut_depth_x'].set(f"{width_m * 1000.0:.3f}")
+
+    def _find_metadata_csv_path(self):
+        if not hasattr(self, 'grid_vars'):
+            return None
+        out_name = self.grid_vars.get('output_filename', tk.StringVar(value="")).get().strip()
+        candidates = []
+        if out_name:
+            candidates.append(os.path.join(self.project_dir.get(), out_name))
+        proj_name = self.project_name.get().strip() or "scanner"
+        candidates.append(os.path.join(self.project_dir.get(), f"{proj_name}_grid.csv"))
+        candidates.append(os.path.join(self.project_dir.get(), f"{proj_name}_scan_path.csv"))
+        found = next((p for p in candidates if os.path.exists(p)), None)
+        if found:
+            return found
+
+        try:
+            for filename in os.listdir(self.project_dir.get()):
+                if filename.endswith("_grid.csv") or filename.endswith("_scan_path.csv"):
+                    discovered_name = filename.replace("_grid.csv", "").replace("_scan_path.csv", "")
+                    if discovered_name:
+                        self.project_name.set(discovered_name)
+                    return os.path.join(self.project_dir.get(), filename)
+        except OSError:
+            pass
+        return None
+
+    def _metadata_from_current_project(self):
+        metadata = {}
+        for key in self._reference_metadata_keys():
+            if key in getattr(self, 'grid_vars', {}):
+                val = self._grid_value(key)
+                if val:
+                    metadata[key] = val
+        if getattr(self, 'user_positions', None):
+            metadata['user_positions'] = self.user_positions
+        return metadata
+
+    def _metadata_from_csv(self, csv_path):
+        try:
+            if not csv_path:
+                return {}
+
+            import ast
+            import csv
+
+            metadata = {}
+            settings = {}
+            explicit_keys = self._reference_metadata_keys()
+
+            with open(csv_path, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    for key in explicit_keys:
+                        if key not in metadata:
+                            val = str(row.get(key, "")).strip()
+                            if val:
+                                metadata[key] = val
+                    row_user_positions = self._user_positions_from_mapping(row)
+                    if "user_positions" not in metadata and row_user_positions:
+                        metadata["user_positions"] = row_user_positions
+
+                    item = str(row.get("gen_settings", "")).strip()
+                    if "=" in item:
+                        key, value = item.split("=", 1)
+                        settings[key.strip()] = value.strip()
+
+            for key in explicit_keys:
+                if key not in metadata and key in settings:
+                    metadata[key] = settings[key]
+
+            def parse_tuple(value):
+                parsed = ast.literal_eval(value)
+                if isinstance(parsed, (list, tuple)) and len(parsed) >= 3:
+                    return parsed
+                return None
+
+            for key, prefix in [
+                ("tweeter_pos", "tw"),
+                ("top_crit_pos", "top"),
+                ("bot_crit_pos", "bot"),
+                ("ref_origin_pos", "ref_origin"),
+                ("baffle_bl_pos", "baffle_bl"),
+                ("baffle_tl_pos", "baffle_tl"),
+                ("baffle_tr_pos", "baffle_tr"),
+                ("baffle_bot_l_pos", "baffle_bl"),
+                ("baffle_top_l_pos", "baffle_tl"),
+                ("baffle_top_r_pos", "baffle_tr"),
+            ]:
+                if key not in settings:
+                    continue
+                vals = parse_tuple(settings[key])
+                if not vals:
+                    continue
+                for field, val in zip(["r", "phi", "z"], vals[:3]):
+                    metadata[f"wp_{prefix}_{field}"] = str(val)
+
+            user_positions = []
+            for key, value in settings.items():
+                if not key.startswith("user_position_"):
+                    continue
+                vals = parse_tuple(value)
+                if not vals:
+                    continue
+                raw_name = key.replace("user_position_", "", 1)
+                display_name = raw_name.replace("_", " ").strip().title()
+                user_positions.append({
+                    "name": display_name,
+                    "r": float(vals[0]),
+                    "phi": float(vals[1]),
+                    "z": float(vals[2]),
+                })
+
+            user_positions_key = next((k for k in ("user_positions", "User_positions") if k in settings), None)
+            if user_positions_key:
+                parsed = self._coerce_user_positions(settings[user_positions_key])
+                if parsed:
+                    metadata["user_positions"] = parsed
+            elif user_positions:
+                metadata["user_positions"] = user_positions
+            return metadata
+        except Exception:
+            return {}
+
+    def _metadata_has_reference_points(self, metadata):
+        keys = set(self._reference_metadata_keys())
+        keys.add('user_positions')
+        return any(k in metadata for k in keys)
+
+    def _normalized_metadata(self, metadata):
+        norm = {}
+        for key in self._reference_metadata_keys():
+            if key not in metadata:
+                continue
+            try:
+                norm[key] = round(float(metadata[key]), 6)
+            except (TypeError, ValueError):
+                norm[key] = str(metadata[key]).strip()
+
+        positions = []
+        for pos in metadata.get('user_positions', []) or []:
+            try:
+                name = str(pos.get('name', '')).strip().lower().replace('_', ' ')
+                name = " ".join(name.split())
+                positions.append((
+                    name,
+                    round(float(pos.get('r')), 6),
+                    round(float(pos.get('phi')), 6),
+                    round(float(pos.get('z')), 6),
+                ))
+            except Exception:
+                continue
+        if positions:
+            norm['user_positions'] = sorted(positions)
+        return norm
+
+    def _apply_reference_metadata(self, metadata):
+        for key, val in metadata.items():
+            if key == 'user_positions':
+                if isinstance(val, list):
+                    self.user_positions = val
+                    self._refresh_user_positions_view()
+            elif key in getattr(self, 'grid_vars', {}):
+                self.grid_vars[key].set(str(val))
+
+    def _summarize_metadata_difference(self, project_metadata, csv_metadata):
+        project_norm = self._normalized_metadata(project_metadata)
+        csv_norm = self._normalized_metadata(csv_metadata)
+        lines = []
+        for key in sorted(set(project_norm) | set(csv_norm)):
+            if project_norm.get(key) != csv_norm.get(key):
+                lines.append(f"{key}: project={project_norm.get(key, '<missing>')} | csv={csv_norm.get(key, '<missing>')}")
+        return "\n".join(lines[:8])
+
+    def _ask_metadata_source(self, project_metadata, csv_metadata, csv_path):
+        try:
+            diff_text = self._summarize_metadata_difference(project_metadata, csv_metadata) or "Values differ."
+            msg = (
+                "Project JSON and CSV metadata do not match.\n\n"
+                f"CSV: {os.path.basename(csv_path)}\n\n"
+                f"{diff_text}\n\n"
+                "Use the CSV metadata?\n\n"
+                "Yes = CSV\nNo = Project JSON"
+            )
+            return 'csv' if messagebox.askyesno("Project Metadata Mismatch", msg) else 'project'
+        except KeyboardInterrupt:
+            print("Metadata mismatch popup was interrupted; keeping project JSON metadata.")
+            return 'project'
+        except Exception as e:
+            print(f"Warning: Could not show metadata mismatch popup: {e}")
+            return 'project'
+
+    def _reconcile_project_folder_metadata(self, project_exists, notify=True):
+        csv_path = self._find_metadata_csv_path()
+        project_metadata = self._metadata_from_current_project() if project_exists else {}
+        csv_metadata = self._metadata_from_csv(csv_path) if csv_path else {}
+        project_has_metadata = self._metadata_has_reference_points(project_metadata)
+        csv_has_metadata = self._metadata_has_reference_points(csv_metadata)
+
+        if project_has_metadata and csv_has_metadata:
+            if self._normalized_metadata(project_metadata) != self._normalized_metadata(csv_metadata):
+                source = self._ask_metadata_source(project_metadata, csv_metadata, csv_path) if notify else 'project'
+                if source == 'csv':
+                    self._apply_reference_metadata(csv_metadata)
+                    if notify:
+                        messagebox.showinfo("Metadata Source", "Using CSV metadata as the reference for this project folder.")
+                else:
+                    if notify:
+                        messagebox.showinfo("Metadata Source", "Using project JSON metadata as the reference for this project folder.")
+            return
+
+        if csv_has_metadata and not project_has_metadata:
+            self._apply_reference_metadata(csv_metadata)
+            if notify:
+                if not project_exists:
+                    messagebox.showinfo("Metadata Source", "Project file is missing, so the CSV metadata is being used as the reference.")
+                else:
+                    messagebox.showinfo("Metadata Source", "Project file metadata is missing, so the CSV metadata is being used as the reference.")
+            return
+
+        if project_has_metadata and not csv_has_metadata:
+            if notify:
+                if not csv_path:
+                    messagebox.showinfo("Metadata Source", "CSV file is missing, so the project JSON metadata is being used as the reference.")
+                else:
+                    messagebox.showinfo("Metadata Source", "CSV metadata is missing, so the project JSON metadata is being used as the reference.")
+
+    def _get_project_named_points_m(self):
+        points = []
+        for name, prefix in [
+            ('Tweeter', 'tw'),
+            ('Reference Origin', 'ref_origin'),
+        ]:
+            try:
+                r = self._grid_value(f'wp_{prefix}_r')
+                phi = self._grid_value(f'wp_{prefix}_phi')
+                z = self._grid_value(f'wp_{prefix}_z')
+                if r and phi and z:
+                    x_mm, y_mm, z_mm = self._cyl_mm_to_xyz_mm(r, phi, z)
+                    points.append({'name': name, 'xyz': (x_mm / 1000.0, y_mm / 1000.0, z_mm / 1000.0)})
+            except Exception:
+                pass
+
+        for pos in getattr(self, 'user_positions', []) or []:
+            try:
+                name = str(pos.get('name', 'User Position')).strip() or 'User Position'
+                x_mm, y_mm, z_mm = self._cyl_mm_to_xyz_mm(pos['r'], pos['phi'], pos['z'])
+                points.append({'name': name, 'xyz': (x_mm / 1000.0, y_mm / 1000.0, z_mm / 1000.0)})
+            except Exception:
+                continue
+        return points
+
+    def _get_project_baffle_box_m(self):
+        try:
+            import numpy as np
+
+            bl = (
+                self._grid_value('wp_baffle_bl_r'),
+                self._grid_value('wp_baffle_bl_phi'),
+                self._grid_value('wp_baffle_bl_z'),
+            )
+            tl = (
+                self._grid_value('wp_baffle_tl_r'),
+                self._grid_value('wp_baffle_tl_phi'),
+                self._grid_value('wp_baffle_tl_z'),
+            )
+            tr = (
+                self._grid_value('wp_baffle_tr_r'),
+                self._grid_value('wp_baffle_tr_phi'),
+                self._grid_value('wp_baffle_tr_z'),
+            )
+            if not all(bl + tl + tr):
+                raise ValueError("Baffle waypoints are incomplete.")
+
+            bl_xyz = np.array(self._cyl_mm_to_xyz_mm(*bl), dtype=float) / 1000.0
+            tl_xyz = np.array(self._cyl_mm_to_xyz_mm(*tl), dtype=float) / 1000.0
+            tr_xyz = np.array(self._cyl_mm_to_xyz_mm(*tr), dtype=float) / 1000.0
+            depth_x = max(0.0, self._mm_to_m(self.stage5_vars['dut_depth_x'].get()))
+
+            width_vec = tr_xyz - tl_xyz
+            height_vec = tl_xyz - bl_xyz
+            width_m = max(float(np.linalg.norm(width_vec)), 0.001)
+            height_m = max(float(np.linalg.norm(height_vec)), 0.001)
+            normal = np.cross(width_vec, height_vec)
+            normal_len = float(np.linalg.norm(normal))
+            if normal_len <= 0.0:
+                raise ValueError("Baffle waypoints do not define a plane.")
+
+            br_xyz = bl_xyz + width_vec
+            front = [bl_xyz, tl_xyz, tr_xyz, br_xyz]
+
+            top_front_x = (tl_xyz[0] + tr_xyz[0]) / 2.0
+            back_x = top_front_x - depth_x
+            back = [np.array([back_x, pt[1], pt[2]], dtype=float) for pt in front]
+            vertices = [tuple(pt) for pt in front + back]
+            center = tuple(np.mean(np.array(vertices), axis=0))
+            return (width_m, depth_x, height_m), center, vertices
+        except Exception:
+            try:
+                depth_x = max(0.0, self._mm_to_m(self.stage5_vars.get('dut_depth_x', tk.StringVar(value="0.0")).get()))
+            except Exception:
+                depth_x = 0.0
+            return (0.20, depth_x, 0.40), (0.0, 0.0, 0.0), None
+
+    def _get_project_z_center_m(self):
+        try:
+            top_z = self._grid_value('wp_top_z')
+            bot_z = self._grid_value('wp_bot_z')
+            if top_z and bot_z:
+                return ((float(top_z) + float(bot_z)) / 2.0) / 1000.0
+        except Exception:
+            pass
+        return None
 
     def _set_widget_state(self, widget, state):
         try:
@@ -1333,11 +1437,11 @@ class SpkrScannerApp(tk.Tk):
             
     def _build_stage1_ui(self):
         # --- Scrollable Setup ---
-        canvas = tk.Canvas(self.tab_stage1, highlightthickness=0)
+        canvas = tk.Canvas(self.tab_stage1, highlightthickness=0, bg=SETTINGS_CANVAS_BG)
         self.stage1_canvas = canvas
         scrollbar = ttk.Scrollbar(self.tab_stage1, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -1380,7 +1484,7 @@ class SpkrScannerApp(tk.Tk):
         self.stage1_vars['target_peak_db'] = self._add_form_entry(main_settings_frame, "Target Peak (dB):", "-3.0", "Target peak level (dBFS) for the loudest file in the set.", state_var=self.stage1_vars['enable_auto_gain'])
         
         # --- Advanced Settings ---
-        self.btn_stage1_advanced = ttk.Button(main_container, text="Show Advanced Settings ▼", command=self._toggle_stage1_advanced)
+        self.btn_stage1_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage1_advanced)
         self.btn_stage1_advanced.pack(side=tk.TOP, pady=10)
 
         self.stage1_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
@@ -1398,16 +1502,24 @@ class SpkrScannerApp(tk.Tk):
         # --- Button ---
         self.btn_stage1_run = ttk.Button(main_container, text="Run Stage 1", command=self._action_run_stage1)
         self.btn_stage1_run.pack(side=tk.TOP, pady=20)
+        stage1_folder_note = ttk.Label(
+            main_container,
+            text="Note: Stage 1 expects IR WAV files in project_folder/measurement_set or project_folder/recordings.",
+            font=("Arial", 9, "italic"),
+            justify=tk.LEFT
+        )
+        stage1_folder_note.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, padx=10, pady=(12, 10))
+        main_container.bind("<Configure>", lambda e, lbl=stage1_folder_note: lbl.configure(wraplength=max(240, e.width - 44)), add="+")
         
 
     def _toggle_stage1_advanced(self):
         if self.stage1_adv_frame.winfo_ismapped():
             self.stage1_adv_frame.pack_forget()
-            self.btn_stage1_advanced.config(text="Show Advanced Settings ▼")
+            self.btn_stage1_advanced.config(text="Show Advanced Settings")
             self.stage1_canvas.yview_moveto(0)
         else:
             self.stage1_adv_frame.pack(side=tk.TOP, fill=tk.X, pady=5, before=self.btn_stage1_run)
-            self.btn_stage1_advanced.config(text="Hide Advanced Settings ▲")
+            self.btn_stage1_advanced.config(text="Hide Advanced Settings")
             
     def _update_cli(self):
         # Amalgamate all messages in the queue to process in a single batch
@@ -1463,9 +1575,10 @@ class SpkrScannerApp(tk.Tk):
     def _run_stage1_thread(self):
         try:
             proj_dir = self.project_dir.get()
-            input_dir = os.path.join(proj_dir, "Recordings")
+            input_dir = self._find_stage1_ir_dir(proj_dir)
             out_dir = os.path.join(proj_dir, "outputs")
             output_filename = f"{self.project_name.get()}_complex_data.npz"
+            print(f"Stage 1 using IR WAV folder: {input_dir}")
             
             rft_ms = float(self.stage1_vars['fdw_rft_ms'].get())
             oct_res = float(self.stage1_vars['fdw_oct_res'].get())
@@ -1547,7 +1660,7 @@ class SpkrScannerApp(tk.Tk):
             self.after(0, lambda: self.btn_stage1_run.config(state=tk.NORMAL))
 
     def _build_stage2_ui(self):
-        canvas = tk.Canvas(self.tab_stage2, highlightthickness=0)
+        canvas = tk.Canvas(self.tab_stage2, highlightthickness=0, bg=SETTINGS_CANVAS_BG)
         self.stage2_canvas = canvas
         scrollbar = ttk.Scrollbar(self.tab_stage2, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -1602,7 +1715,7 @@ class SpkrScannerApp(tk.Tk):
         self.stage2_vars['tweeter_z'] = self._add_form_entry(tw_z_frame, "Tweeter Z (mm):", "0.0", "Seed coordinate for search (Height).")
         
         # --- Advanced Settings ---
-        self.btn_stage2_advanced = ttk.Button(main_container, text="Show Advanced Settings ▼", command=self._toggle_stage2_advanced)
+        self.btn_stage2_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage2_advanced)
         self.btn_stage2_advanced.pack(side=tk.TOP, pady=10)
 
         self.stage2_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
@@ -1648,11 +1761,11 @@ class SpkrScannerApp(tk.Tk):
     def _toggle_stage2_advanced(self):
         if self.stage2_adv_frame.winfo_ismapped():
             self.stage2_adv_frame.pack_forget()
-            self.btn_stage2_advanced.config(text="Show Advanced Settings ▼")
+            self.btn_stage2_advanced.config(text="Show Advanced Settings")
             self.stage2_canvas.yview_moveto(0)
         else:
             self.stage2_adv_frame.pack(side=tk.TOP, fill=tk.X, pady=5, before=self.btn_stage2_run)
-            self.btn_stage2_advanced.config(text="Hide Advanced Settings ▲")
+            self.btn_stage2_advanced.config(text="Hide Advanced Settings")
 
     def _action_run_stage2(self):
         if DEBUG_MODE:
@@ -1720,7 +1833,8 @@ class SpkrScannerApp(tk.Tk):
             if res is not None:
                 sweep_results, f_all, keys, d_dict, geom, cfg, data = res
                 
-                def do_save():
+                def do_save(reopen_after=False):
+                    nonlocal data
                     history_freq, history_search_x, history_search_y, history_search_z = [], [], [], []
                     for f_hz in sorted(sweep_results.keys()):
                         d = sweep_results[f_hz]
@@ -1730,12 +1844,15 @@ class SpkrScannerApp(tk.Tk):
                             history_search_y.append(d['final_c'][1])
                             history_search_z.append(d['final_c'][2])
                     
-                    export_interpolated_origins(history_freq, history_search_x, history_search_y, history_search_z, f_all, data, input_dir, output_filename, True)
+                    origins_full = export_interpolated_origins(history_freq, history_search_x, history_search_y, history_search_z, f_all, data, input_dir, output_filename, True)
+                    if reopen_after and origins_full is not None:
+                        import numpy as np
+                        data = np.load(os.path.join(input_dir, output_filename), allow_pickle=True)
                     print("Stage 2 completed successfully.")
 
                 def finish_stage2():
-                    do_save()
                     if plot_results:
+                        do_save(reopen_after=True)
                         print("\nOpening Validation UI...")
                         from viewers import ValidationUI
                         import matplotlib.pyplot as plt
@@ -1750,8 +1867,12 @@ class SpkrScannerApp(tk.Tk):
                                     print("Saving adjusted results...")
                                     do_save()
                                 else:
+                                    if hasattr(data, "close"):
+                                        data.close()
                                     print("Validation UI closed.")
                         wait_for_ui()
+                    else:
+                        do_save()
                 
                 self.after(0, finish_stage2)
             
@@ -1761,7 +1882,7 @@ class SpkrScannerApp(tk.Tk):
             self.after(0, lambda: self.btn_stage2_run.config(state=tk.NORMAL))
 
     def _build_stage3_ui(self):
-        canvas = tk.Canvas(self.tab_stage3, highlightthickness=0)
+        canvas = tk.Canvas(self.tab_stage3, highlightthickness=0, bg=SETTINGS_CANVAS_BG)
         self.stage3_canvas = canvas
         scrollbar = ttk.Scrollbar(self.tab_stage3, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -1798,15 +1919,12 @@ class SpkrScannerApp(tk.Tk):
         self.stage3_vars = {}
 
         # --- Advanced Settings ---
-        self.btn_stage3_advanced = ttk.Button(main_container, text="Show Advanced Settings ▼", command=self._toggle_stage3_advanced)
+        self.btn_stage3_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage3_advanced)
         self.btn_stage3_advanced.pack(side=tk.TOP, pady=10)
 
         self.stage3_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
         
-        self.stage3_vars['test_order_range'] = self._add_form_entry(self.stage3_adv_frame, "Test Order Range (min, max):", "4, 15", "Range of orders N to test.")
-        self.stage3_vars['test_start_db_range'] = self._add_form_entry(self.stage3_adv_frame, "Test Start dB Range (highest, lowest):", "-20.0, -60.0", "Highest and lowest dB start point to test.")
-        self.stage3_vars['test_lambda_range'] = self._add_form_entry(self.stage3_adv_frame, "Test Lambda Range (min, max):", "0.0000001, 0.01", "Range of max lambdas to test.")
-        self.stage3_vars['test_db_transition_span'] = self._add_form_entry(self.stage3_adv_frame, "Test dB Transition Span:", "20.0", "The dB range between start of damping and maximum damping.")
+        self.stage3_vars['test_order_range'] = self._add_form_entry(self.stage3_adv_frame, "Test Order Range (min, max):", "2, 15", "Range of orders N to test.")
 
         # --- Button ---
         self.btn_stage3_run = ttk.Button(main_container, text="Run Stage 3", command=self._action_run_stage3)
@@ -1815,11 +1933,11 @@ class SpkrScannerApp(tk.Tk):
     def _toggle_stage3_advanced(self):
         if self.stage3_adv_frame.winfo_ismapped():
             self.stage3_adv_frame.pack_forget()
-            self.btn_stage3_advanced.config(text="Show Advanced Settings ▼")
+            self.btn_stage3_advanced.config(text="Show Advanced Settings")
             self.stage3_canvas.yview_moveto(0)
         else:
             self.stage3_adv_frame.pack(side=tk.TOP, fill=tk.X, pady=5, before=self.btn_stage3_run)
-            self.btn_stage3_advanced.config(text="Hide Advanced Settings ▲")
+            self.btn_stage3_advanced.config(text="Hide Advanced Settings")
 
     def _action_run_stage3(self):
         if DEBUG_MODE:
@@ -1840,50 +1958,96 @@ class SpkrScannerApp(tk.Tk):
             if not os.path.exists(os.path.join(input_dir, input_filename)):
                 input_filename = f"{self.project_name.get()}_complex_data.npz"
             
-            def parse_bounds(b_str):
-                parts = b_str.split(',')
-                return (float(parts[0]), float(parts[1]))
-            
             def parse_bounds_int(b_str):
                 parts = b_str.split(',')
                 return (int(parts[0]), int(parts[1]))
 
             order_range = parse_bounds_int(self.stage3_vars['test_order_range'].get())
-            start_db_range = parse_bounds(self.stage3_vars['test_start_db_range'].get())
-            lambda_range = parse_bounds(self.stage3_vars['test_lambda_range'].get())
-            transition_span = float(self.stage3_vars['test_db_transition_span'].get())
 
             from stage3_optimize_she_settings import run_open_branch_optimizer
             
-            target_n_max, noise_floor_start_db, noise_floor_max_db, max_lambda = run_open_branch_optimizer(
+            optimizer_result = run_open_branch_optimizer(
                 input_dir_opti=input_dir,
                 input_filename_opti=input_filename,
                 test_order_range=order_range,
-                test_start_db_range=start_db_range,
-                test_lambda_range=lambda_range,
-                test_db_transition_span=transition_span,
+                test_start_db_range=(-20.0, -60.0),
+                test_lambda_range=(0.0000001, 0.01),
+                test_db_transition_span=20.0,
                 use_optimized_origins=True,
                 speed_of_sound=343.0,
                 kr_offset=2.0
             )
 
-            # Pass suggested values seamlessly into stage 4 forms
-            def update_stage4():
-                if 'target_n_max' in self.stage4_vars:
-                    self.stage4_vars['target_n_max'].set(str(target_n_max))
-                if 'noise_floor_start_db' in self.stage4_vars:
-                    self.stage4_vars['noise_floor_start_db'].set(str(noise_floor_start_db))
-                if 'noise_floor_max_db' in self.stage4_vars:
-                    self.stage4_vars['noise_floor_max_db'].set(str(noise_floor_max_db))
-                if 'max_lambda' in self.stage4_vars:
-                    self.stage4_vars['max_lambda'].set(f"{max_lambda:.8f}")
-
-            self.after(0, update_stage4)
-            print("Stage 3 completed successfully. Suggested max order and lambda settings updated in Stage 4.")
+            self.after(0, lambda: self._show_stage3_choice_popup(optimizer_result))
+            print("Stage 3 completed successfully. Choose which suggested order to send to Stage 4.")
         except Exception as e:
             print(f"Error during Stage 3: {e}")
         finally:
             self.after(0, lambda: self.btn_stage3_run.config(state=tk.NORMAL))
+
+    def _show_stage3_choice_popup(self, optimizer_result):
+        if isinstance(optimizer_result, tuple):
+            target_n_max, noise_floor_start_db, noise_floor_max_db, max_lambda = optimizer_result
+            options = {
+                "balanced": {
+                    "label": "Order N with balanced SFS and angular detail",
+                    "n": target_n_max,
+                    "st": noise_floor_start_db,
+                    "mx": noise_floor_max_db,
+                    "lam": max_lambda,
+                    "ratio": None,
+                    "err": None,
+                    "warning": ""
+                }
+            }
+        else:
+            options = optimizer_result.get("options", {})
+
+        if not options:
+            messagebox.showwarning("Stage 3", "No Stage 3 suggestion was produced.")
+            return
+
+        top = tk.Toplevel(self)
+        top.title("Choose Stage 3 Order N")
+        top.geometry("620x360")
+        top.transient(self)
+        top.grab_set()
+
+        frame = ttk.Frame(top, padding="12")
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Select the order N result to use in Stage 4:", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
+
+        choice_var = tk.StringVar(value="balanced" if "balanced" in options else next(iter(options.keys())))
+
+        for key in ["balanced", "best_sfs"]:
+            opt = options.get(key)
+            if not opt:
+                continue
+            ratio_text = "n/a" if opt.get("ratio") is None else f"{opt['ratio']:.2f} dB"
+            err_text = "n/a" if opt.get("err") is None else f"{opt['err']:.2f}%"
+            text = (
+                f"{opt.get('label', key)}\n"
+                f"N={opt['n']}, Int/Ext={ratio_text}, residual={err_text}"
+            )
+            if opt.get("warning"):
+                text += f"\nWarning: {opt['warning']}"
+            ttk.Radiobutton(frame, text=text, variable=choice_var, value=key).pack(anchor=tk.W, fill=tk.X, pady=6)
+
+        note = optimizer_result.get("warning", "") if isinstance(optimizer_result, dict) else ""
+        if note:
+            ttk.Label(frame, text=note, foreground="orange", wraplength=560).pack(anchor=tk.W, pady=(8, 0))
+
+        def send_choice():
+            opt = options[choice_var.get()]
+            if 'target_n_max' in self.stage4_vars:
+                self.stage4_vars['target_n_max'].set(str(opt['n']))
+            print(f"Sent {opt.get('label', choice_var.get())} (N={opt['n']}) to Stage 4.")
+            top.destroy()
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(12, 0))
+        ttk.Button(btn_frame, text="Use in Stage 4", command=send_choice).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=top.destroy).pack(side=tk.RIGHT, padx=5)
 
     def _build_stage4_ui(self):
         scroll_frame = ScrollableFrame(self.tab_stage4)
@@ -1905,7 +2069,7 @@ class SpkrScannerApp(tk.Tk):
         self.stage4_vars['target_n_max'] = self._add_form_entry(main_settings_frame, "Target N Max:", "8", "Hard upper cap on harmonic order N.")
         
         # --- Advanced Settings ---
-        self.btn_stage4_advanced = ttk.Button(main_container, text="Show Advanced Settings ▼", command=self._toggle_stage4_advanced)
+        self.btn_stage4_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage4_advanced)
         self.btn_stage4_advanced.pack(side=tk.TOP, pady=10)
 
         self.stage4_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
@@ -1924,9 +2088,9 @@ class SpkrScannerApp(tk.Tk):
         
         ttk.Label(self.stage4_adv_frame, text="Regularization", font=("Arial", 9, "bold")).pack(side=tk.TOP, anchor=tk.W, pady=(15, 5))
         
-        self.stage4_vars['noise_floor_start_db'] = self._add_form_entry(self.stage4_adv_frame, "Noise Floor Start (dB):", "-30.0", "The point where damping starts.")
-        self.stage4_vars['noise_floor_max_db'] = self._add_form_entry(self.stage4_adv_frame, "Noise Floor Max (dB):", "-50.0", "The point where damping hits MAX_LAMBDA.")
-        self.stage4_vars['max_lambda'] = self._add_form_entry(self.stage4_adv_frame, "Max Lambda:", "0.00000010", "The maximum penalty applied to modes.")
+        self.stage4_vars['noise_floor_start_db'] = self._add_form_entry(self.stage4_adv_frame, "Noise Floor Start (dB):", "-30.0", "Fixed default damping start.")
+        self.stage4_vars['noise_floor_max_db'] = self._add_form_entry(self.stage4_adv_frame, "Noise Floor Max (dB):", "-40.0", "Fixed default point where damping hits MAX_LAMBDA.")
+        self.stage4_vars['max_lambda'] = self._add_form_entry(self.stage4_adv_frame, "Max Lambda:", "0.00000100", "Fixed default maximum penalty applied to modes.")
         self.stage4_vars['use_optimized_origins'] = self._add_checkbutton(self.stage4_adv_frame, "Use Optimized Origins", True, "Essential for best fit.")
         
         # --- Button ---
@@ -1936,11 +2100,11 @@ class SpkrScannerApp(tk.Tk):
     def _toggle_stage4_advanced(self):
         if self.stage4_adv_frame.winfo_ismapped():
             self.stage4_adv_frame.pack_forget()
-            self.btn_stage4_advanced.config(text="Show Advanced Settings ▼")
+            self.btn_stage4_advanced.config(text="Show Advanced Settings")
             self.stage4_canvas.yview_moveto(0)
         else:
             self.stage4_adv_frame.pack(side=tk.TOP, fill=tk.X, pady=5, before=self.btn_stage4_run)
-            self.btn_stage4_advanced.config(text="Hide Advanced Settings ▲")
+            self.btn_stage4_advanced.config(text="Hide Advanced Settings")
 
     def _open_manual_table_editor(self):
         top = tk.Toplevel(self)
@@ -2189,10 +2353,10 @@ class SpkrScannerApp(tk.Tk):
 
         offset_frame = ttk.Frame(ref_axis_frame)
         offset_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
-        ttk.Label(offset_frame, text="Mic Offset (m):").pack(side=tk.LEFT, padx=(0, 10))
-        self.stage5_vars['offset_mic_x'] = self._add_labeled_entry(offset_frame, "X:", "0.0", 5, GUI_TOOLTIPS.get('offset_mic_x'))
-        self.stage5_vars['offset_mic_y'] = self._add_labeled_entry(offset_frame, "Y:", "0.0", 5, GUI_TOOLTIPS.get('offset_mic_y'))
-        self.stage5_vars['offset_mic_z'] = self._add_labeled_entry(offset_frame, "Z:", "0.0", 5, GUI_TOOLTIPS.get('offset_mic_z'))
+        ttk.Label(offset_frame, text="Mic Offset (mm):").pack(side=tk.LEFT, padx=(0, 10))
+        self.stage5_vars['offset_mic_x'] = self._add_labeled_entry(offset_frame, "X:", "0.0", 7, GUI_TOOLTIPS.get('offset_mic_x'))
+        self.stage5_vars['offset_mic_y'] = self._add_labeled_entry(offset_frame, "Y:", "0.0", 7, GUI_TOOLTIPS.get('offset_mic_y'))
+        self.stage5_vars['offset_mic_z'] = self._add_labeled_entry(offset_frame, "Z:", "0.0", 7, GUI_TOOLTIPS.get('offset_mic_z'))
 
         zero_angle_frame = ttk.Frame(ref_axis_frame)
         zero_angle_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
@@ -2218,7 +2382,7 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_arc_frame = ttk.Frame(eval_frame, padding=(0, 5, 0, 5))
         self.stage5_arc_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
         ttk.Label(self.stage5_arc_frame, text="Measurement Arc Sweep:", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        self.stage5_vars['range_deg'] = self._add_form_entry(self.stage5_arc_frame, "Range (± deg):", "90", GUI_TOOLTIPS.get('range_deg'))
+        self.stage5_vars['range_deg'] = self._add_form_entry(self.stage5_arc_frame, "Range (+/- deg):", "90", GUI_TOOLTIPS.get('range_deg'))
         self.stage5_vars['increment_deg'] = self._add_form_entry(self.stage5_arc_frame, "Increment (deg):", "10", GUI_TOOLTIPS.get('increment_deg'))
         self.stage5_vars['direction'] = self._add_combobox(self.stage5_arc_frame, "Sweep Direction:", ["horizontal", "vertical", "hor_vert"], "horizontal", GUI_TOOLTIPS.get('direction'))
 
@@ -2275,20 +2439,19 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_vars['cta_mode'].trace_add("write", lambda *args: [ _on_cta_changed(), self._schedule_update_stage5_preview()])
         self.stage5_vars['manual_list_mode'].trace_add("write", lambda *args: [ _on_manual_changed(), self._schedule_update_stage5_preview()])
 
-        # Initialize DUT variables for the right-hand viewer pane without creating left-pane widgets
-        self.stage5_vars['dut_width_y'] = tk.StringVar(value="0.20")
-        self.stage5_vars['dut_depth_x'] = tk.StringVar(value="0.25")
-        self.stage5_vars['dut_height_z'] = tk.StringVar(value="0.40")
+        # Baffle width/height/position come from the project baffle waypoints.
+        default_dut_depth = self._get_project_baffle_width_m()
+        self.stage5_vars['dut_depth_x'] = tk.StringVar(value=f"{default_dut_depth * 1000.0:.3f}" if default_dut_depth else "0.0")
 
         # Bind updates for entries that don't use the trace system
-        for var_key in ['dist_mic', 'range_deg', 'increment_deg', 'offset_mic_x', 'offset_mic_y', 'offset_mic_z', 'zero_theta_deg', 'zero_phi_deg', 'dut_width_y', 'dut_depth_x', 'dut_height_z']:
+        for var_key in ['dist_mic', 'range_deg', 'increment_deg', 'offset_mic_x', 'offset_mic_y', 'offset_mic_z', 'zero_theta_deg', 'zero_phi_deg', 'dut_depth_x']:
             # This is a bit of a hack to get the widget from the var, assuming it was the last one created
             self.stage5_vars[var_key].trace_add('write', self._schedule_update_stage5_preview)
 
         _sync_eval_ui()
 
         # --- Advanced Settings ---
-        self.btn_stage5_advanced = ttk.Button(main_container, text="Show Advanced Settings ▼", command=self._toggle_stage5_advanced)
+        self.btn_stage5_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage5_advanced)
         self.btn_stage5_advanced.pack(side=tk.TOP, pady=10)
 
         self.stage5_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
@@ -2303,11 +2466,11 @@ class SpkrScannerApp(tk.Tk):
     def _toggle_stage5_advanced(self):
         if self.stage5_adv_frame.winfo_ismapped():
             self.stage5_adv_frame.pack_forget()
-            self.btn_stage5_advanced.config(text="Show Advanced Settings ▼")
+            self.btn_stage5_advanced.config(text="Show Advanced Settings")
             self.stage5_scroll_canvas.yview_moveto(0)
         else:
             self.stage5_adv_frame.pack(side=tk.TOP, fill=tk.X, pady=5, before=self.btn_stage5_run)
-            self.btn_stage5_advanced.config(text="Hide Advanced Settings ▲")
+            self.btn_stage5_advanced.config(text="Hide Advanced Settings")
 
     def _open_stage5_coord_table_editor(self):
         if DEBUG_MODE:
@@ -2395,16 +2558,8 @@ class SpkrScannerApp(tk.Tk):
             import math
             import numpy as np
             
-            box_dims = (
-                float(self.stage5_vars['dut_width_y'].get()),
-                float(self.stage5_vars['dut_depth_x'].get()),
-                float(self.stage5_vars['dut_height_z'].get())
-            )
-            offset_xyz = (
-                float(self.stage5_vars['offset_mic_x'].get()),
-                float(self.stage5_vars['offset_mic_y'].get()),
-                float(self.stage5_vars['offset_mic_z'].get())
-            )
+            box_dims, box_center, box_vertices = self._get_project_baffle_box_m()
+            offset_xyz = self._stage5_offset_m()
             z_th = float(self.stage5_vars['zero_theta_deg'].get())
             z_ph = float(self.stage5_vars['zero_phi_deg'].get())
 
@@ -2488,7 +2643,11 @@ class SpkrScannerApp(tk.Tk):
                 mic_coords_xyz=final_mic_xyz, 
                 ref_origin=offset_xyz, # The axis lines still originate from the offset
                 zero_theta_deg=z_th, 
-                zero_phi_deg=z_ph
+                zero_phi_deg=z_ph,
+                named_points_xyz=self._get_project_named_points_m(),
+                z_center=self._get_project_z_center_m(),
+                box_center=box_center,
+                box_vertices=box_vertices
             )
             
         except ValueError:
@@ -2518,7 +2677,7 @@ class SpkrScannerApp(tk.Tk):
                 raise FileNotFoundError(f"Coefficient file not found: {coeff_path}")
 
             output_dir_abs = os.path.join(proj_dir, self.stage5_vars['output_dir'].get())
-            offset_xyz = (float(self.stage5_vars['offset_mic_x'].get()), float(self.stage5_vars['offset_mic_y'].get()), float(self.stage5_vars['offset_mic_z'].get()))
+            offset_xyz = self._stage5_offset_m()
             
             apply_mic_cal = self.stage5_vars['apply_mic_cal'].get()
             mic_cal_file = ""
@@ -2574,10 +2733,6 @@ class SpkrScannerApp(tk.Tk):
     def on_closing(self):
         if DEBUG_MODE:
             print("[DEBUG] Action: Application closing")
-        try:
-            self._destroy_viewer()
-        except Exception:
-            pass
         if hasattr(self, 'debug_log_file') and self.debug_log_file:
             try:
                 self.debug_log_file.close()
@@ -2627,3 +2782,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

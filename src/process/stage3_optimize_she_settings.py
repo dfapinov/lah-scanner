@@ -6,6 +6,10 @@ Step 1: Finds the Tipping Point N. Keeps (N) and (N-1) alive.
 Step 2: Sweeps heavy damping to find the plateau/noise floor for both.
 Step 3: Sweeps lambdas AND threshold brackets for both orders to find 
         the absolute best global configuration.
+
+Update: Steps 2 and 3 were found ineffective in practice and are retained
+below only as legacy reference code. The active Stage 3 optimizer now runs
+only the Step 1 order-N test. Stage 4 owns the regularization defaults.
 """
 
 import os
@@ -32,8 +36,12 @@ except ImportError as e:
 # =============================================================================
 # DEBUG/TESTING SETTINGS
 # =============================================================================
-# Set to an integer to force Step 2 to use a specific order_N, e.g., 6.
-MANUAL_STEP2_ORDER = 13
+# Set to an integer to force Step 2 to use a specific order_N, e.g., 13.
+MANUAL_STEP2_ORDER = None
+
+FIXED_NOISE_FLOOR_START_DB = -30.0
+FIXED_NOISE_FLOOR_MAX_DB = -40.0
+FIXED_MAX_LAMBDA = 0.000001
 
 def calc_internal_external_ratio(coeffs):
     eps = np.finfo(float).eps
@@ -121,7 +129,7 @@ def run_open_branch_optimizer(
     
     # Hardcap to N_grid
     max_n = min(max_n, N_grid)
-    min_n = min(min_n, max_n)
+    min_n = min(max(2, min_n), max_n)
     
     orders = list(range(min_n, max_n + 1))
     configs_s1 = [(n, -50.0, -50.0 - test_db_transition_span, 1e-10) for n in orders]
@@ -133,6 +141,7 @@ def run_open_branch_optimizer(
     # Store data for stable N calculation
     n_vals = []
     ratio_vals = []
+    err_vals = []
     delta_vals = []
     prev_ratio = None
     
@@ -143,51 +152,98 @@ def run_open_branch_optimizer(
         
         n_vals.append(n)
         ratio_vals.append(ratio)
+        err_vals.append(data['err'])
         delta_vals.append(delta)
         prev_ratio = ratio
         
         print(f"{n:<10} | {ratio:<20.2f} | {data['err']:<12.2f} | {delta:<10.2f}")
 
-    # --- Positive Delta Math ---
-    stable_N = n_vals[0]
-    stable_ratio = ratio_vals[0]
+    positive_candidates = [(n, r) for n, r in zip(n_vals, ratio_vals) if r > 0]
+    usable_candidates = [(n, r) for n, r in positive_candidates if r >= 15.0]
+    if usable_candidates:
+        balance_pool = [(n, r) for n, r in usable_candidates if r >= 20.0]
+        if balance_pool:
+            stable_N, stable_ratio = min(balance_pool, key=lambda item: (item[1] - 20.0, item[0]))
+        else:
+            stable_N, stable_ratio = max(usable_candidates, key=lambda item: item[1])
+    elif positive_candidates:
+        stable_N, stable_ratio = max(positive_candidates, key=lambda item: item[1])
+    else:
+        stable_N, stable_ratio = max(zip(n_vals, ratio_vals), key=lambda item: item[1])
 
-    for n, r, d in zip(n_vals, ratio_vals, delta_vals):
-        if d > 0:
-            stable_N = n
-            stable_ratio = r
-
-    # --- Closest Delta to -2dB Math ---
-    closest_N_to_minus2 = n_vals[0]
-    if len(n_vals) > 1:
-        min_diff = float('inf')
-        for n, d in zip(n_vals[1:], delta_vals[1:]):
-            diff = abs(d - (-2.0))
-            if diff < min_diff:
-                min_diff = diff
-                closest_N_to_minus2 = n
+    best_sfs_idx = int(np.argmax(ratio_vals))
+    best_sfs_N = n_vals[best_sfs_idx]
+    best_sfs_ratio = ratio_vals[best_sfs_idx]
+    best_sfs_err = err_vals[best_sfs_idx]
+    if best_sfs_ratio <= 0:
+        print("WARNING: No positive Int/Ext ratio was found. Sound field separation may not be ideal; re-consider measurement settings.")
+    elif best_sfs_ratio < 15.0:
+        print("WARNING: No Order N reached 15 dB Int/Ext ratio. Using the highest available ratio; sound field separation may not be ideal. Re-consider measurement settings.")
 
     print("-" * 65)
-    print(f"=> Stable Order Detected at N={stable_N} (Ratio: {stable_ratio:.2f} dB)")
+    print(f"=> Order N with balanced SFS and angular detail: N={stable_N} (Ratio: {stable_ratio:.2f} dB)")
+    print(f"=> Order N with best SFS and solve stability: N={best_sfs_N} (Ratio: {best_sfs_ratio:.2f} dB)")
+
+    print("\n" + "="*65)
+    print(" FINAL ORDER N OPTIONS")
+    print("="*65)
+    print(f"Order N with balanced SFS and angular detail: N={stable_N}, Ratio={stable_ratio:.2f} dB, Resid={err_vals[n_vals.index(stable_N)]:.2f}%")
+    print(f"Order N with best SFS and solve stability: N={best_sfs_N}, Ratio={best_sfs_ratio:.2f} dB, Resid={best_sfs_err:.2f}%")
+    print("="*65)
+
+    elapsed = time.time() - start_time
+    print(f"\nStage 3 processing completed in {elapsed:.2f} seconds.")
+
+    warning = ""
+    if best_sfs_ratio < 15.0:
+        warning = "No Order N reached 15 dB Int/Ext ratio. Sound field separation may not be ideal; re-consider measurement settings."
+
+    def step1_option(label, order_n, ratio, err):
+        option_warning = ""
+        if ratio < 15.0:
+            option_warning = "Below 15 dB Int/Ext ratio; sound field separation may not be ideal."
+        return {
+            'label': label,
+            'n': order_n,
+            'st': FIXED_NOISE_FLOOR_START_DB,
+            'mx': FIXED_NOISE_FLOOR_MAX_DB,
+            'lam': FIXED_MAX_LAMBDA,
+            'ratio': ratio,
+            'err': err,
+            'warning': option_warning,
+        }
+
+    return {
+        'options': {
+            'balanced': step1_option("Order N with balanced SFS and angular detail", stable_N, stable_ratio, err_vals[n_vals.index(stable_N)]),
+            'best_sfs': step1_option("Order N with best SFS and solve stability", best_sfs_N, best_sfs_ratio, best_sfs_err),
+        },
+        'warning': warning,
+    }
+
+    # =========================================================================
+    # LEGACY REFERENCE ONLY: STEPS 2 AND 3
+    # =========================================================================
+    # The noise-floor and lambda sweep below was found ineffective in practice.
+    # It is intentionally unreachable so Stage 3 only runs the Step 1 order-N
+    # test. Retaining the code makes it easy to revisit the experiment later.
     
-    unstable_N = min(max_n, stable_N + 1)
-    active_orders = [stable_N, unstable_N]
-    
-    print(f"=> Keeping Orders N={stable_N} (Stable) and N={unstable_N} (Tipping) active for Step 3.")
+    noise_floor_N = min(max_n, max(stable_N, best_sfs_N) + 1)
+    active_orders = [stable_N]
 
 
     # =========================================================================
     # STEP 2: MAPPING THE NOISE FLOOR 
     # =========================================================================
     if MANUAL_STEP2_ORDER is not None:
-        step2_orders = [MANUAL_STEP2_ORDER]
+        step2_orders = [min(max(MANUAL_STEP2_ORDER, min_n), max_n)]
         print("\n" + "="*65)
-        print(f" STEP 2: MAPPING NOISE FLOOR (Manual Order N={MANUAL_STEP2_ORDER}, Lam=0.01)")
+        print(f" STEP 2: MAPPING NOISE FLOOR (Manual Order N={step2_orders[0]}, Lam=0.01)")
         print("="*65)
     else:
-        step2_orders = [closest_N_to_minus2]
+        step2_orders = [noise_floor_N]
         print("\n" + "="*65)
-        print(f" STEP 2: MAPPING NOISE FLOOR (Order {closest_N_to_minus2}, Lam=0.01)")
+        print(f" STEP 2: MAPPING NOISE FLOOR (Higher Order N={noise_floor_N}, Lam=0.01)")
         print("="*65)
         
     db_start, db_end = test_start_db_range
@@ -201,21 +257,15 @@ def run_open_branch_optimizer(
             
     res_s2 = run_batch(configs_s2)
     
-    if MANUAL_STEP2_ORDER is not None:
-        print(f"{'Start dB':<10} | {'Ratio N=' + str(MANUAL_STEP2_ORDER):<15}")
-        print("-" * 30)
-    else:
-        print(f"{'Start dB':<10} | {'Ratio N=' + str(closest_N_to_minus2):<15}")
-        print("-" * 30)
+    noise_eval_N = step2_orders[0]
+    print(f"{'Start dB':<10} | {'Ratio N=' + str(noise_eval_N):<15}")
+    print("-" * 30)
         
     peak_ratio_eval = -float('inf')
     best_st_db = -30.0
     
     for st in start_dbs:
-        if MANUAL_STEP2_ORDER is not None:
-            r_eval = res_s2[(MANUAL_STEP2_ORDER, st, st - test_db_transition_span, 0.01)]['ratio_db']
-        else:
-            r_eval = res_s2[(closest_N_to_minus2, st, st - test_db_transition_span, 0.01)]['ratio_db']
+        r_eval = res_s2[(noise_eval_N, st, st - test_db_transition_span, 0.01)]['ratio_db']
             
         flag = ""
         if r_eval > peak_ratio_eval:
@@ -225,10 +275,7 @@ def run_open_branch_optimizer(
             
         print(f"{st:<10.1f} | {r_eval:<15.2f} {flag}")
 
-    if MANUAL_STEP2_ORDER is not None:
-        print(f"\n=> Manual Order Peak Rejection found at {best_st_db} dB")
-    else:
-        print(f"\n=> Order {closest_N_to_minus2} Peak Rejection found at {best_st_db} dB")
+    print(f"\n=> Order {noise_eval_N} Peak Rejection found at {best_st_db} dB")
     
     best_st_db += 5.0
     print(f"=> Adjusting NOISE_FLOOR_START_DB to {best_st_db} dB (+5dB) to begin gradual damping before the knee.")
@@ -291,47 +338,79 @@ def run_open_branch_optimizer(
                 
                 results_list.append({'n': n, 'st': best_st_db, 'mx': mx_db, 'lam': lam, 'ratio': data['ratio_db'], 'err': data['err'], 'score': score})
 
-    # Sort and print the winner
     results_list.sort(key=lambda x: x['score'], reverse=True)
+    for row in results_list[:5]:
+        flag = " * TOP" if row == results_list[0] else ""
+        print(f"{row['n']:<6} | {row['mx']:<9.1f} | {row['lam']:<10.8f} | {row['ratio']:<8.2f} | {row['err']:<8.2f} | {row['score']:<8.2f}{flag}")
 
-    winner = results_list[0]
-    print(f"{winner['n']:<6} | {winner['mx']:<9.1f} | {winner['lam']:<10.8f} | {winner['ratio']:<8.2f} | {winner['err']:<8.2f} | {winner['score']:<8.2f}  * WINNER")
+    def best_config_for_order(order_n):
+        order_results = [r for r in results_list if r['n'] == order_n and r['ratio'] > 0]
+        if not order_results:
+            baseline = base_data.get(order_n)
+            if baseline and baseline['ratio_db'] > 0:
+                return {
+                    'n': order_n,
+                    'st': best_st_db,
+                    'mx': best_st_db - test_db_transition_span,
+                    'lam': 1e-10,
+                    'ratio': baseline['ratio_db'],
+                    'err': baseline['err'],
+                    'score': baseline['ratio_db'] - (baseline['err'] * 0.5),
+                }
+            order_results = [r for r in results_list if r['n'] == order_n]
+        return order_results[0] if order_results else None
 
-    if winner['n'] == unstable_N:
-        title = " AGGRESSIVE WINNER PIPELINE CONFIGURATION (Tipping N)"
-    else:
-        title = " CONSERVATIVE WINNER PIPELINE CONFIGURATION (Stable N)"
+    balanced_cfg = best_config_for_order(stable_N)
+    best_sfs_cfg = best_config_for_order(best_sfs_N)
+    if best_sfs_cfg is None:
+        best_sfs_cfg = {
+            'n': best_sfs_N,
+            'st': balanced_cfg['st'],
+            'mx': balanced_cfg['mx'],
+            'lam': balanced_cfg['lam'],
+            'ratio': best_sfs_ratio,
+            'err': best_sfs_err,
+            'score': balanced_cfg['score'],
+        }
+
+    def option_from_config(label, cfg, baseline_ratio):
+        warning = ""
+        if baseline_ratio < 15.0:
+            warning = "Below 15 dB Int/Ext ratio; sound field separation may not be ideal."
+        if cfg['n'] != stable_N:
+            warning = (warning + " " if warning else "") + "Regularization thresholds were tuned with the balanced order N."
+        return {
+            'label': label,
+            'n': cfg['n'],
+            'st': cfg['st'],
+            'mx': cfg['mx'],
+            'lam': cfg['lam'],
+            'ratio': cfg['ratio'],
+            'err': cfg['err'],
+            'warning': warning,
+        }
 
     print("\n" + "="*65)
-    print(title)
+    print(" FINAL ORDER N OPTIONS")
     print("="*65)
-    print(f"TARGET_N_MAX = {winner['n']}")
-    print(f"NOISE_FLOOR_START_DB = {winner['st']}")
-    print(f"NOISE_FLOOR_MAX_DB = {winner['mx']}")
-    print(f"MAX_LAMBDA = {winner['lam']:.8f}")
+    print(f"Order N with balanced SFS and angular detail: N={balanced_cfg['n']}, Ratio={balanced_cfg['ratio']:.2f} dB, Resid={balanced_cfg['err']:.2f}%")
+    print(f"Order N with best SFS and solve stability: N={best_sfs_cfg['n']}, Ratio={best_sfs_cfg['ratio']:.2f} dB, Resid={best_sfs_cfg['err']:.2f}%")
     print("="*65)
-
-    if winner['n'] == unstable_N:
-        safe_winner = next((r for r in results_list if r['n'] == stable_N), None)
-        if safe_winner:
-            print("\n" + "-"*65)
-            print(" CONSERVATIVE WINNER PIPELINE CONFIGURATION (Stable N Fallback)")
-            print("-"*65)
-            print(f"TARGET_N_MAX = {safe_winner['n']}")
-            print(f"NOISE_FLOOR_START_DB = {safe_winner['st']}")
-            print(f"NOISE_FLOOR_MAX_DB = {safe_winner['mx']}")
-            print(f"MAX_LAMBDA = {safe_winner['lam']:.8f}")
-            print("-"*65)
-
-    target_n_max = winner['n']
-    noise_floor_start_db = winner['st']
-    noise_floor_max_db = winner['mx']
-    max_lambda = winner['lam']
 
     elapsed = time.time() - start_time
     print(f"\nStage 3 processing completed in {elapsed:.2f} seconds.")
     
-    return target_n_max, noise_floor_start_db, noise_floor_max_db, max_lambda
+    warning = ""
+    if best_sfs_ratio < 15.0:
+        warning = "No Order N reached 15 dB Int/Ext ratio. Sound field separation may not be ideal; re-consider measurement settings."
+
+    return {
+        'options': {
+            'balanced': option_from_config("Order N with balanced SFS and angular detail", balanced_cfg, stable_ratio),
+            'best_sfs': option_from_config("Order N with best SFS and solve stability", best_sfs_cfg, best_sfs_ratio),
+        },
+        'warning': warning,
+    }
 
 def main():
     try:
