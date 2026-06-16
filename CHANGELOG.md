@@ -1,10 +1,18 @@
 # Changelog
 
+## [2.2.10] - 2026-06-16
+Changed: Stage 2 speed-of-sound optimization now scores each candidate across six non-coherent probe bins from 5 kHz to 10 kHz. Speed-of-sound selection uses
+mean fit error across the probe bins with a small worst-bin penalty.
+The speed-of-sound value flows through the processing files themselves: Stage 2 writes `speed_of_sound_mps` to the NPZ, Stage 3 and Stage 4 read it from that NPZ, Stage 4 writes it into the coefficients H5, and Stage 5 reads it from the H5.
+Added: Stage 3 now saves an Int/Ext ratio vs. Order N sweep plot and shows the sweep in the Stage 3 choice popup with suggested orders highlighted as points.
+Added: Stage 3 now calculates an "Order N at roll-off start" option using the first sustained acceleration in the post-peak Int/Ext decline.
+
 ## [2.2.9] - 2026-05-30
 
 Added: Project waypoint metadata loading for baffle points, tweeter position, reference origin, and related measurement reference points. These values are now imported from project JSON/CSV metadata and used to populate downstream GUI fields.
 Added: Stage 5 visual preview now uses the project baffle waypoints, including tilted baffle planes, instead of assuming a simple axis-aligned cabinet reference.
 Changed: Stage 1 now accepts either `project_folder/measurement_set` or `project_folder/recordings` as the IR WAV input folder, matching folder names case-insensitively for compatibility with both new and old capture systems.
+Changed: Stage 5 SPL calibration is stored as `stage5_vars.frd_db_offset` so the capture and post-processing tools share one FRD export level key.
 Changed: Stage 3 now only runs the order-N SFS test. The previous noise-floor and lambda sweep code is retained in the script as blocked-out legacy reference because it was found ineffective in practice.
 Changed: Stage 3 GUI tab renamed to "Stage 3: Find Order N" to better match its purpose.
 Changed: Stage 4 GUI/config defaults updated to Noise Floor Start = -30 dB, Noise Floor Max = -40 dB, and Max Lambda = 0.000001.

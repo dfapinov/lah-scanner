@@ -1832,6 +1832,7 @@ class SpkrScannerApp(tk.Tk):
             
             if res is not None:
                 sweep_results, f_all, keys, d_dict, geom, cfg, data = res
+                selected_speed = float(cfg.get('speed_of_sound', 343.0))
                 
                 def do_save(reopen_after=False):
                     nonlocal data
@@ -1844,7 +1845,18 @@ class SpkrScannerApp(tk.Tk):
                             history_search_y.append(d['final_c'][1])
                             history_search_z.append(d['final_c'][2])
                     
-                    origins_full = export_interpolated_origins(history_freq, history_search_x, history_search_y, history_search_z, f_all, data, input_dir, output_filename, True)
+                    origins_full = export_interpolated_origins(
+                        history_freq,
+                        history_search_x,
+                        history_search_y,
+                        history_search_z,
+                        f_all,
+                        data,
+                        input_dir,
+                        output_filename,
+                        True,
+                        speed_of_sound=selected_speed
+                    )
                     if reopen_after and origins_full is not None:
                         import numpy as np
                         data = np.load(os.path.join(input_dir, output_filename), allow_pickle=True)
@@ -2009,7 +2021,7 @@ class SpkrScannerApp(tk.Tk):
 
         top = tk.Toplevel(self)
         top.title("Choose Stage 3 Order N")
-        top.geometry("620x360")
+        top.geometry("780x680")
         top.transient(self)
         top.grab_set()
 
@@ -2017,17 +2029,61 @@ class SpkrScannerApp(tk.Tk):
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Select the order N result to use in Stage 4:", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
 
-        choice_var = tk.StringVar(value="balanced" if "balanced" in options else next(iter(options.keys())))
+        plot_fig = None
+        step1 = optimizer_result.get("step1", {}) if isinstance(optimizer_result, dict) else {}
+        plot_path = optimizer_result.get("plot_path", "") if isinstance(optimizer_result, dict) else ""
+        orders = step1.get("orders", [])
+        ratios = step1.get("ratios", [])
+        if len(orders) > 0 and len(ratios) > 0:
+            plot_fig, ax_ratio = plt.subplots(figsize=(7.4, 3.2))
+            ax_ratio.plot(orders, ratios, marker="o", linewidth=1.4, color="#4c78a8", label="Int/Ext ratio")
+            ax_ratio.set_xlabel("Order N")
+            ax_ratio.set_ylabel("Int/Ext ratio (dB)")
+            ax_ratio.set_xticks(orders)
+            ax_ratio.grid(True, linestyle="--", alpha=0.35)
 
-        for key in ["balanced", "best_sfs"]:
+            marker_styles = {
+                "rolloff_knee": ("#e45756", "o", "Roll-off knee"),
+                "balanced": ("#54a24b", "D", "Balanced"),
+                "best_sfs": ("#b279a2", "s", "Best SFS"),
+            }
+            for key, (color, marker, label) in marker_styles.items():
+                opt = options.get(key)
+                if opt and opt.get("n") is not None and opt.get("ratio") is not None:
+                    ax_ratio.scatter(
+                        [float(opt["n"])],
+                        [float(opt["ratio"])],
+                        s=95,
+                        color=color,
+                        marker=marker,
+                        edgecolors="white",
+                        linewidths=1.1,
+                        zorder=5,
+                        label=label,
+                    )
+
+            handles, labels = ax_ratio.get_legend_handles_labels()
+            ax_ratio.legend(handles, labels, loc="best", fontsize=8)
+            plot_fig.tight_layout()
+
+            canvas_plot = FigureCanvasTkAgg(plot_fig, master=frame)
+            canvas_plot.draw()
+            canvas_plot.get_tk_widget().pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        if plot_path:
+            ttk.Label(frame, text=f"Saved plot: {plot_path}", wraplength=720).pack(anchor=tk.W, pady=(0, 8))
+
+        default_choice = "rolloff_knee" if "rolloff_knee" in options else ("balanced" if "balanced" in options else next(iter(options.keys())))
+        choice_var = tk.StringVar(value=default_choice)
+
+        for key in ["rolloff_knee", "balanced", "best_sfs"]:
             opt = options.get(key)
             if not opt:
                 continue
             ratio_text = "n/a" if opt.get("ratio") is None else f"{opt['ratio']:.2f} dB"
-            err_text = "n/a" if opt.get("err") is None else f"{opt['err']:.2f}%"
             text = (
                 f"{opt.get('label', key)}\n"
-                f"N={opt['n']}, Int/Ext={ratio_text}, residual={err_text}"
+                f"N={opt['n']}, Int/Ext={ratio_text}"
             )
             if opt.get("warning"):
                 text += f"\nWarning: {opt['warning']}"
@@ -2042,12 +2098,19 @@ class SpkrScannerApp(tk.Tk):
             if 'target_n_max' in self.stage4_vars:
                 self.stage4_vars['target_n_max'].set(str(opt['n']))
             print(f"Sent {opt.get('label', choice_var.get())} (N={opt['n']}) to Stage 4.")
-            top.destroy()
+            close_popup()
 
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(12, 0))
         ttk.Button(btn_frame, text="Use in Stage 4", command=send_choice).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=top.destroy).pack(side=tk.RIGHT, padx=5)
+
+        def close_popup():
+            if plot_fig is not None:
+                plt.close(plot_fig)
+            top.destroy()
+
+        top.protocol("WM_DELETE_WINDOW", close_popup)
+        ttk.Button(btn_frame, text="Cancel", command=close_popup).pack(side=tk.RIGHT, padx=5)
 
     def _build_stage4_ui(self):
         scroll_frame = ScrollableFrame(self.tab_stage4)
@@ -2264,7 +2327,7 @@ class SpkrScannerApp(tk.Tk):
                         save_path_prefix=save_prefix,
                         she_dict=she_dict,
                         coords_sph=results.get("coords_sph"),
-                        c_sound=343.0
+                        c_sound=results.get("speed_of_sound_mps", 343.0)
                     )
             
             self.after(0, launch_plotter)

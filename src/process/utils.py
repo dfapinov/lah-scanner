@@ -30,12 +30,12 @@ def natural_keys(text: str) -> List[Union[int, str]]:
     """
     return [atoi(c) for c in re.split(r'(\d+)', text)]
 
-# Regex for parsing coordinates from filenames (e.g., prefix_r1000_phn10p5_z200.wav)
+# Regex for parsing coordinates from filenames (e.g., prefix_r1000_ph-10p5_z-200.wav).
 _ph_pat = re.compile(
     r"""
     ^.*?                            # anything up front (e.g., id2_)
     _r(?P<rmm>-?\d+(?:p\d+)*)       # r: integer or any p-decimal chain
-    _ph(?P<ph>[-np\d]+)             # phi: digits, 'p', maybe leading 'n'
+    _ph(?P<ph>-?\d+(?:p\d+)*)      # phi: signed integer or p-decimal
     _z(?P<zmm>-?\d+(?:p\d+)*)       # z: integer or any p-decimal chain
     (?:_.*)?                        # optional suffix (like _HF), or nothing
     (?:\.[^.]+)?$                   # optional file extension (like .wav) at the end
@@ -58,17 +58,9 @@ def parse_coords_from_filename(fname: str) -> Tuple[float, float, float]:
     def _decode_coord(s: str) -> float:
         return float(s.replace("p", "."))
 
-    def _decode_phi(s: str) -> float:
-        neg = s.startswith("n")
-        s = s[1:] if neg else s
-        s = s.replace("p", ".")
-        val = float(s)
-        return -val if neg else val
-
     r_mm = _decode_coord(m.group("rmm"))
-    ph_str = m.group("ph")
     z_mm = _decode_coord(m.group("zmm"))
-    phi_deg = _decode_phi(ph_str)
+    phi_deg = _decode_coord(m.group("ph"))
 
     r_cyl_m = r_mm / 1000.0
     z_m = z_mm / 1000.0
@@ -107,6 +99,7 @@ def load_and_parse_npz(filepath: Union[str, Path]) -> Dict:
         'th_arr': np.array(th_list),
         'ph_arr': np.array(ph_list),
         'origins_mm': loaded[schema.ORIGINS_MM] if schema.ORIGINS_MM in loaded else None,
+        'speed_of_sound_mps': loaded[schema.SPEED_OF_SOUND_MPS].item() if schema.SPEED_OF_SOUND_MPS in loaded else None,
         'fs': loaded[schema.FS].item() if schema.FS in loaded else None,
         'raw_data': loaded
     }
@@ -120,11 +113,13 @@ def load_she_h5(source: Union[str, Path, Dict[str, np.ndarray]]) -> Dict[str, np
         with h5py.File(path, "r") as h:
             origins_mm = h.get(schema.ORIGINS_MM)
             fs_val = h.get(schema.FS)
+            speed_val = h.get(schema.SPEED_OF_SOUND_MPS)
             return {
                 schema.FREQS: h[schema.FREQS][()],
                 schema.COEFFS: h[schema.COEFFS][()],
                 schema.N_USED: h[schema.N_USED][()].astype(int),
                 schema.ORIGINS_MM: origins_mm[()] if origins_mm is not None else None,
+                schema.SPEED_OF_SOUND_MPS: speed_val[()] if speed_val is not None else None,
                 schema.FS: fs_val[()] if fs_val is not None else None
             }
     elif isinstance(source, dict):

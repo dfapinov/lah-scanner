@@ -66,7 +66,7 @@ Input Arguments:
     manual_order_table (dict): Dictionary mapping maximum frequency to N order.
     save_to_disk (bool): Whether to save the origins array to the .npz archive.
     plot_results_origins (bool): Launch the interactive validation UI.
-    speed_of_sound (float): Speed of sound in m/s.
+    speed_of_sound (float): Initial speed of sound in m/s. Stage 2 will optimize this before the main origin sweep.
     use_cache (bool): Read previously computed results from a .pkl cache file.
     read_cache_file (str): Path to the cache file.
     enable_full_grid_scan (bool): Run the heavy 3D volumetric landscape rendering.
@@ -79,25 +79,34 @@ Code Pipeline Overview
 
 1) Load the complex frequency data and raw spherical coordinates.
 2) Setup frequency targets based on standard octave resolution (e.g., 1/6 oct).
-3) Launch two threaded search branches (High-to-Low and Low-to-High).
+3) Optimize speed of sound using six 5-10 kHz probe bins with non-coherent wavelength ratios.
+4) Launch two threaded search branches (High-to-Low and Low-to-High).
    – For each frequency, run Nelder-Mead optimization to find the lowest residual error.
    – Use the result as the seed for the next adjacent frequency.
-4) Compare results from both branches for each frequency and select the minimum error.
-5) Present an interactive validation UI for user review and manual edits.
-6) Interpolate the approved origins across the full FFT frequency resolution.
-7) Append the origins array to the original dataset and save as a new .npz file.
+5) Compare results from both branches for each frequency and select the minimum error.
+6) Present an interactive validation UI for user review and manual edits.
+7) Interpolate the approved origins across the full FFT frequency resolution.
+8) Append the origins array to the original dataset and save as a new .npz file.
 
 """
+
+import os
+
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
 import numpy as np
 import pickle
 import sys
-import os
 import re
 import math
 import tempfile
 import threading
 import time
+import itertools
 from datetime import datetime
 from multiprocessing import Pool, cpu_count, get_context
 from concurrent.futures import ThreadPoolExecutor
@@ -136,6 +145,185 @@ def get_order_for_frequency(f_hz, manual_order_table, target_n_max_origins, N_gr
         if f_hz <= cutoff:
             return min(manual_order_table[cutoff], N_cap)
     return min(manual_order_table[sorted_cuts[-1]], N_cap)
+
+def build_stage2_frequency_targets(f_all, freq_start_hz, freq_end_hz, octave_resolution):
+    target_freqs = []
+    current_f = freq_start_hz
+    while current_f <= freq_end_hz:
+        target_freqs.append(current_f)
+        if freq_start_hz == freq_end_hz:
+            break
+        current_f *= (2 ** octave_resolution)
+
+    actual_freqs_asc = []
+    f_indices_asc = []
+    for tf in target_freqs:
+        idx = int(np.abs(f_all - tf).argmin())
+        af = float(f_all[idx])
+        if af not in actual_freqs_asc:
+            actual_freqs_asc.append(af)
+            f_indices_asc.append(idx)
+
+    return actual_freqs_asc, f_indices_asc
+
+def build_speed_of_sound_candidates(center_mps=343.0, half_range_mps=12.0, step_mps=1.0):
+    center = float(center_mps)
+    half_range = abs(float(half_range_mps))
+    step = abs(float(step_mps))
+    if step == 0:
+        raise ValueError("Speed-of-sound optimization step must not be zero.")
+
+    start = center - half_range
+    stop = center + half_range
+    candidates = np.arange(start, stop + step * 0.5, step, dtype=float)
+    if not np.any(np.isclose(candidates, center)):
+        candidates = np.append(candidates, center)
+    return np.array(sorted(set(np.round(candidates, 10))), dtype=float)
+
+def _is_simple_frequency_ratio(freq_a, freq_b, max_integer=4, tolerance=0.01):
+    ratio = max(float(freq_a), float(freq_b)) / max(min(float(freq_a), float(freq_b)), 1e-12)
+    for numerator in range(1, max_integer + 1):
+        for denominator in range(1, max_integer + 1):
+            simple_ratio = numerator / denominator
+            if simple_ratio < 1.0:
+                continue
+            if abs(ratio - simple_ratio) / simple_ratio <= tolerance:
+                return True
+    return False
+
+def _is_noncoherent_probe_set(freqs):
+    for i in range(len(freqs)):
+        for j in range(i + 1, len(freqs)):
+            if _is_simple_frequency_ratio(freqs[i], freqs[j]):
+                return False
+    return True
+
+def select_speed_of_sound_probe_bins(actual_freqs_asc, f_indices_asc, count=6, min_freq_hz=5000.0, max_freq_hz=10000.0):
+    if len(actual_freqs_asc) == 0:
+        return []
+
+    freq_index_pairs = [
+        (float(f), int(idx))
+        for f, idx in zip(actual_freqs_asc, f_indices_asc)
+        if float(min_freq_hz) <= float(f) <= float(max_freq_hz)
+    ]
+    if len(freq_index_pairs) < count:
+        raise ValueError(
+            f"Stage 2 speed-of-sound optimization needs at least {count} Stage 2 frequency bins above "
+            f"{min_freq_hz:g} Hz and at or below {max_freq_hz:g} Hz. Found {len(freq_index_pairs)}. "
+            "Increase Stage 2 frequency range/resolution."
+        )
+    if len(freq_index_pairs) <= count:
+        return freq_index_pairs
+
+    freqs = np.array([pair[0] for pair in freq_index_pairs], dtype=float)
+    target_freqs = np.geomspace(float(freqs[0]), float(freqs[-1]), count)
+    candidate_lists = []
+
+    for target in target_freqs:
+        nearest = np.argsort(np.abs(freqs - target))[:min(8, len(freqs))]
+        candidate_lists.append(nearest.tolist())
+
+    best_combo = None
+    best_score = float('inf')
+    for candidate_tuple in itertools.product(*candidate_lists):
+        idxs = sorted(set(int(idx) for idx in candidate_tuple))
+        if len(idxs) != count:
+            continue
+        combo_freqs = [freqs[idx] for idx in idxs]
+        if not _is_noncoherent_probe_set(combo_freqs):
+            continue
+        target_error = sum(abs(np.log(combo_freqs[n] / target_freqs[n])) for n in range(count))
+        spread_penalty = 0.0 if combo_freqs[-1] / combo_freqs[0] >= 1.4 else 10.0
+        score = target_error + spread_penalty
+        if score < best_score:
+            best_combo = idxs
+            best_score = score
+
+    if best_combo is None:
+        for idxs in itertools.combinations(range(len(freqs)), count):
+            combo_freqs = [freqs[idx] for idx in idxs]
+            if not _is_noncoherent_probe_set(combo_freqs):
+                continue
+            target_error = sum(abs(np.log(combo_freqs[n] / target_freqs[n])) for n in range(count))
+            spread_penalty = 0.0 if combo_freqs[-1] / combo_freqs[0] >= 1.4 else 10.0
+            score = target_error + spread_penalty
+            if score < best_score:
+                best_combo = list(idxs)
+                best_score = score
+
+    if best_combo is None:
+        raise ValueError(
+            f"Could not find {count} non-coherent Stage 2 speed-of-sound probe bins above "
+            f"{min_freq_hz:g} Hz and at or below {max_freq_hz:g} Hz. "
+            "Increase Stage 2 frequency resolution or adjust the speed probe range."
+        )
+
+    return [freq_index_pairs[idx] for idx in best_combo]
+
+def score_speed_of_sound_candidates(raw_results, worst_penalty_weight=0.15):
+    sorted_results = sorted(raw_results, key=lambda item: item[0])
+    scored = []
+    for speed, mean_error, probe_results in sorted_results:
+        probe_errors = {float(row['freq']): float(row['error']) for row in probe_results}
+        finite_errors = [err for err in probe_errors.values() if np.isfinite(err)]
+        worst_error = float(np.max(finite_errors)) if finite_errors else float('inf')
+        mean_error = float(mean_error)
+        score = mean_error + worst_penalty_weight * max(0.0, worst_error - mean_error)
+        scored.append({
+            'speed': float(speed),
+            'mean_error': mean_error,
+            'probe_results': probe_results,
+            'probe_errors': probe_errors,
+            'worst_error': worst_error,
+            'score': score,
+        })
+    return scored
+
+def _worker_speed_of_sound_candidate(args):
+    candidate_speed, probe_data, tweeter_coords_mm, r_arr, th_arr, ph_arr, cfg_base = args
+    cfg = dict(cfg_base)
+    cfg['speed_of_sound'] = float(candidate_speed)
+    cfg['enable_full_grid_scan'] = False
+
+    probe_results = []
+    for probe_freq, p_list in probe_data:
+        order = get_order_for_frequency(
+            probe_freq,
+            cfg['manual_order_table'],
+            cfg['target_n_max_origins'],
+            cfg.get('N_grid', 999)
+        )
+        context = (
+            [(float(probe_freq), float(2 * np.pi * probe_freq / cfg['speed_of_sound']), np.array(p_list))],
+            r_arr,
+            th_arr,
+            ph_arr,
+            order,
+            cfg
+        )
+        opt_c, _path = run_simplex_descent_3d(tweeter_coords_mm, context)
+        error = solve_physics_3d(opt_c[0], opt_c[1], opt_c[2], context) if opt_c is not None else float('inf')
+        probe_results.append({'freq': float(probe_freq), 'error': float(error), 'origin': opt_c})
+
+    finite_errors = [row['error'] for row in probe_results if np.isfinite(row['error'])]
+    mean_error = float(np.mean(finite_errors)) if finite_errors else float('inf')
+    return float(candidate_speed), mean_error, probe_results
+
+def run_speed_of_sound_candidate_batch(label, candidates, probe_data, tweeter_coords_mm, r_arr, th_arr, ph_arr, cfg):
+    workers = min(cpu_count(), len(candidates))
+    print(f"\n{label}: {candidates[0]:g} to {candidates[-1]:g} m/s ({len(candidates)} candidates)")
+    print(f"Parallel candidate workers: {workers}")
+
+    worker_args = [
+        (float(candidate_speed), probe_data, tweeter_coords_mm, r_arr, th_arr, ph_arr, cfg)
+        for candidate_speed in candidates
+    ]
+    results = []
+    ctx = get_context('spawn')
+    with ctx.Pool(processes=workers) as pool:
+        results = list(pool.imap_unordered(_worker_speed_of_sound_candidate, worker_args))
+    return results
 
 # =============================================================================
 # 1. 3D PHYSICS ENGINE
@@ -366,7 +554,7 @@ class DynamicBranchSweeper:
 
         return results
 
-def export_interpolated_origins(history_freq, history_search_x, history_search_y, history_search_z, f_all, data, input_dir, output_filename, save_to_disk):
+def export_interpolated_origins(history_freq, history_search_x, history_search_y, history_search_z, f_all, data, input_dir, output_filename, save_to_disk, speed_of_sound=None):
     print("\nInterpolating optimized origins across the full frequency resolution...")
     if len(history_freq) > 0:
         xp = np.array(history_freq)
@@ -378,8 +566,10 @@ def export_interpolated_origins(history_freq, history_search_x, history_search_y
         origins_full = np.column_stack((interp_x, interp_y, interp_z))
         
         if save_to_disk:
-            save_dict = {k: data[k] for k in data.files if k != schema.ORIGINS_MM}
+            save_dict = {k: data[k] for k in data.files if k not in (schema.ORIGINS_MM, schema.SPEED_OF_SOUND_MPS)}
             save_dict[schema.ORIGINS_MM] = origins_full
+            if speed_of_sound is not None:
+                save_dict[schema.SPEED_OF_SOUND_MPS] = np.array(float(speed_of_sound), dtype=np.float64)
             if hasattr(data, "close"):
                 data.close()
             
@@ -474,6 +664,59 @@ def run_origin_search(
     N_grid, M_unique = get_grid_limit(th_arr, ph_arr)
     cfg['N_grid'] = N_grid
 
+    actual_freqs_asc, f_indices_asc = build_stage2_frequency_targets(f_all, freq_start_hz, freq_end_hz, octave_resolution)
+
+    if not actual_freqs_asc:
+        raise ValueError("Stage 2 frequency range produced no probe frequency for speed optimization.")
+
+    speed_probe_bins = select_speed_of_sound_probe_bins(
+        actual_freqs_asc,
+        f_indices_asc,
+        count=6,
+        min_freq_hz=5000.0,
+        max_freq_hz=10000.0
+    )
+    candidates = build_speed_of_sound_candidates(
+        center_mps=343.0,
+        half_range_mps=12.0,
+        step_mps=1.0
+    )
+
+    print("\n--- Speed of Sound Optimization ---")
+    print("Probe frequencies from 5 kHz to 10 kHz with non-coherent wavelength ratios:")
+    for probe_freq, _probe_index in speed_probe_bins:
+        print(f"  {probe_freq:.1f} Hz")
+    probe_data = [
+        (probe_freq, [d_dict[k][probe_index] for k in keys])
+        for probe_freq, probe_index in speed_probe_bins
+    ]
+
+    coarse_results = run_speed_of_sound_candidate_batch(
+        "Coarse pass",
+        candidates,
+        probe_data,
+        tweeter_coords_mm,
+        r_arr,
+        th_arr,
+        ph_arr,
+        cfg
+    )
+    candidate_scores = score_speed_of_sound_candidates(coarse_results)
+    best_candidate = min(candidate_scores, key=lambda item: item['score'])
+    best_speed = best_candidate['speed']
+    best_error = best_candidate['mean_error']
+    print("\nSpeed-of-sound optimization results:")
+    for row in candidate_scores:
+        candidate_speed = row['speed']
+        marker = " <== selected" if candidate_speed == best_speed else ""
+        print(
+            f"  {candidate_speed:>8.3f} m/s : score={row['score']:>8.3f} "
+            f"mean={row['mean_error']:>8.3f}% worst={row['worst_error']:>8.3f}%{marker}"
+        )
+    print(f"Selected speed of sound: {best_speed:g} m/s (mean fit error {best_error:.3f}%, score {best_candidate['score']:.3f})\n")
+    speed_of_sound = best_speed
+    cfg['speed_of_sound'] = speed_of_sound
+
     sweep_results = None
 
     # 2. EITHER read from cache OR execute the sweep
@@ -502,23 +745,7 @@ def run_origin_search(
                 print(f"   -> Grid Scan Minima : Skipped (Grid Scan Bypassed)\n")
 
     else:
-        print("Starting 3D frequency sweep. Grab a coffee, this will take time...\n")
-
-        target_freqs = []
-        current_f = freq_start_hz
-        while current_f <= freq_end_hz:
-            target_freqs.append(current_f)
-            if freq_start_hz == freq_end_hz: break
-            current_f *= (2 ** octave_resolution)
-
-        actual_freqs_asc = []
-        f_indices_asc = []
-        for tf in target_freqs:
-            idx = (np.abs(f_all - tf)).argmin()
-            af = f_all[idx]
-            if af not in actual_freqs_asc:
-                actual_freqs_asc.append(af)
-                f_indices_asc.append(idx)
+        print("Starting 3D frequency sweep...\n")
 
         print(f"Discovered {len(actual_freqs_asc)} distinct frequencies to evaluate.\n")
         
@@ -586,7 +813,7 @@ def run_origin_search(
 
         return export_interpolated_origins(
             history_freq, history_search_x, history_search_y, history_search_z, 
-            f_all, data, input_dir_origins, output_filename_origins, save_to_disk
+            f_all, data, input_dir_origins, output_filename_origins, save_to_disk, speed_of_sound=speed_of_sound
         )
 
     # Save immediately upon completion

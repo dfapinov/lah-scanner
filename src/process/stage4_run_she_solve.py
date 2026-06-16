@@ -148,7 +148,7 @@ def run_she_solve(
     condition_metrics: bool = True,
     use_optimized_origins: bool = True,
     save_to_disk: bool = True,
-    speed_of_sound: float = 343.0,
+    speed_of_sound: float = None,
     kr_offset: float = 2.0,
     jobs: int = None,
     show_plot: bool = True
@@ -161,18 +161,6 @@ def run_she_solve(
         jobs = max(1, cpu_count() // 2)
 
     input_npz_path = os.path.join(input_dir_she, input_filename_she)
-
-    worker_cfg = {
-        'target_n_max': target_n_max,
-        'use_manual_table': use_manual_table,
-        'manual_order_table': manual_order_table,
-        'condition_metrics': condition_metrics,
-        'speed_of_sound': speed_of_sound,
-        'noise_floor_start_db': noise_floor_start_db,
-        'noise_floor_max_db': noise_floor_max_db,
-        'max_lambda': max_lambda,
-        'kr_offset': kr_offset
-    }
 
     log_file_path = None
     handlers = [logging.StreamHandler(sys.stdout)]
@@ -203,6 +191,26 @@ def run_she_solve(
         raise FileNotFoundError(f"ERROR: Input file '{input_npz_path}' not found.")
         
     parsed_data = load_and_parse_npz(input_npz_path)
+    saved_speed = parsed_data.get('speed_of_sound_mps')
+    if saved_speed is not None:
+        speed_of_sound = float(saved_speed)
+        logging.info(f"Using Stage 2 speed of sound from NPZ: {speed_of_sound:g} m/s")
+    elif speed_of_sound is None:
+        speed_of_sound = 343.0
+        logging.info(f"No Stage 2 speed metadata found. Using default speed of sound: {speed_of_sound:g} m/s")
+
+    worker_cfg = {
+        'target_n_max': target_n_max,
+        'use_manual_table': use_manual_table,
+        'manual_order_table': manual_order_table,
+        'condition_metrics': condition_metrics,
+        'speed_of_sound': speed_of_sound,
+        'noise_floor_start_db': noise_floor_start_db,
+        'noise_floor_max_db': noise_floor_max_db,
+        'max_lambda': max_lambda,
+        'kr_offset': kr_offset
+    }
+
     f_all = parsed_data['freqs']
     data_dict = parsed_data['complex_data']
     keys = parsed_data['filenames']
@@ -270,6 +278,7 @@ def run_she_solve(
             h[schema.COND] = res_cond
             h[schema.ORIGINS_MM] = origins_sel_mm # Saved so reconstruction scripts can extract and shift observation coords
             h[schema.PCT_ERROR] = pct_error
+            h[schema.SPEED_OF_SOUND_MPS] = np.array(float(speed_of_sound), dtype=np.float64)
             if fs_common is not None:
                 h[schema.FS] = fs_common
             
@@ -297,6 +306,7 @@ def run_she_solve(
         "cond": res_cond,
         "N_used": res_N,
         "origins_mm": origins_sel_mm,
+        "speed_of_sound_mps": speed_of_sound,
         "residual": res_resid,
         "P_measured": P,
         "residual_vector": res_resid_vec,

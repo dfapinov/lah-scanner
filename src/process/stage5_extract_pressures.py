@@ -18,7 +18,8 @@ import multiprocessing
 import time
 from pathlib import Path
 import numpy as np
-from utils import spherical_to_cartesian, cartesian_to_spherical, apply_mic_calibration, write_wav
+import schema
+from utils import spherical_to_cartesian, cartesian_to_spherical, apply_mic_calibration, write_wav, load_she_h5
 
 from extract_pressures_core import evaluate_she_field
 from complex_to_ir_core import complex_to_ir
@@ -26,6 +27,19 @@ from complex_to_ir_core import complex_to_ir
 # -------------------------------------------------
 # Shared Helpers
 # -------------------------------------------------
+
+def _resolve_speed_of_sound(c_sound, coeff_path, fallback):
+    if c_sound is not None:
+        return float(c_sound)
+    try:
+        saved_speed = load_she_h5(coeff_path).get(schema.SPEED_OF_SOUND_MPS)
+        if saved_speed is not None:
+            resolved = float(saved_speed)
+            print(f"Using Stage 2 speed of sound from coefficients: {resolved:g} m/s")
+            return resolved
+    except Exception:
+        pass
+    return float(fallback)
 
 def get_tof_phasor(freqs, dist_m, c_sound):
     """Calculates the complex phase rotation array needed to subtract time-of-flight."""
@@ -328,7 +342,7 @@ def run_cta2034_extraction(
     zero_theta = zero_theta if zero_theta is not None else config_process.ZERO_THETA_DEG
     zero_phi = zero_phi if zero_phi is not None else config_process.ZERO_PHI_DEG
     offset_xyz = offset_xyz if offset_xyz is not None else (config_process.OFFSET_MIC_X, config_process.OFFSET_MIC_Y, config_process.OFFSET_MIC_Z)
-    c_sound = c_sound if c_sound is not None else config_process.SPEED_OF_SOUND
+    c_sound = _resolve_speed_of_sound(c_sound, coeff_path, config_process.SPEED_OF_SOUND)
     
     print("\n" + "="*50)
     print(" MODE: CTA-2034-A (SPINORAMA)")
@@ -469,7 +483,7 @@ def run_sweep_extraction(
     offset_xyz = offset_xyz if offset_xyz is not None else (config_process.OFFSET_MIC_X, config_process.OFFSET_MIC_Y, config_process.OFFSET_MIC_Z)
     subtract_tof = subtract_tof if subtract_tof is not None else getattr(config_process, 'SUBTRACT_TOF', "Off")
     frd_prefix = frd_prefix if frd_prefix is not None else config_process.FRD_PREFIX
-    c_sound = c_sound if c_sound is not None else config_process.SPEED_OF_SOUND
+    c_sound = _resolve_speed_of_sound(c_sound, coeff_path, config_process.SPEED_OF_SOUND)
     gen_ir = generate_ir_files if generate_ir_files is not None else getattr(config_process, 'GENERATE_IR_FILES', False)
 
     output_dir = output_dir / frd_prefix

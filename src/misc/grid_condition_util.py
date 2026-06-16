@@ -12,8 +12,8 @@ import ctypes
 # =================================================================
 # USER CONFIGURATION
 # =================================================================
-CSV_FILE_PATH = 'jan_cylinder_grid4.csv'  # Path to your grid file
-ORDER_N       = 8                         # Expansion Order (N=8 results in 162 modes)
+CSV_FILE_PATH = 'dual_layer_grid.csv'  # Path to your grid file
+ORDER_N       = 5                         # Expansion Order (N=8 results in 162 modes)
 FREQ_START    = 100                      # Start frequency in Hz
 FREQ_END      = 20000                     # End frequency in Hz
 FREQ_STEP     = 100                       # Frequency resolution

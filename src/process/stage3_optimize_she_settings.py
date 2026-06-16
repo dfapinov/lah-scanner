@@ -43,6 +43,146 @@ FIXED_NOISE_FLOOR_START_DB = -30.0
 FIXED_NOISE_FLOOR_MAX_DB = -40.0
 FIXED_MAX_LAMBDA = 0.000001
 
+def find_rolloff_knee(orders, ratios):
+    orders = np.asarray(orders, dtype=float)
+    ratios = np.asarray(ratios, dtype=float)
+    finite = np.isfinite(orders) & np.isfinite(ratios)
+    orders = orders[finite]
+    ratios = ratios[finite]
+    if len(orders) < 4:
+        return None
+
+    sort_idx = np.argsort(orders)
+    orders = orders[sort_idx]
+    ratios = ratios[sort_idx]
+
+    peak_idx = int(np.argmax(ratios))
+    if peak_idx >= len(orders) - 2:
+        return None
+
+    seg_orders = orders[peak_idx:]
+    seg_ratios = ratios[peak_idx:]
+    total_drop = float(seg_ratios[0] - seg_ratios[-1])
+    if total_drop <= max(1.0, 0.05 * float(np.ptp(ratios))):
+        return None
+
+    step_widths = np.diff(seg_orders)
+    if np.any(step_widths <= 0):
+        return None
+
+    drops = -np.diff(seg_ratios) / step_widths
+    positive_drops = drops[drops > 0]
+    if len(positive_drops) < 2:
+        return None
+
+    ratio_span = abs(float(np.nanmax(ratios) - np.nanmin(ratios)))
+    min_extra_drop = max(0.08, 0.006 * ratio_span)
+    knee_local_idx = None
+    knee_strength = 0.0
+
+    for j in range(1, len(drops)):
+        previous_declines = drops[:j]
+        previous_declines = previous_declines[previous_declines > 0]
+        if len(previous_declines) == 0:
+            continue
+
+        baseline = float(np.median(previous_declines))
+        baseline = max(baseline, 0.05)
+        current = float(drops[j])
+        next_drop = float(drops[j + 1]) if j + 1 < len(drops) else current
+        sustained = min(current, next_drop)
+        acceleration = current - baseline
+
+        # Choose the first order where the decline rate leaves the earlier
+        # gentle tail, with the next segment confirming it is not a one-bin dip.
+        if (
+            current >= baseline * 1.15
+            and acceleration >= min_extra_drop
+            and sustained >= baseline + (min_extra_drop * 0.25)
+        ):
+            knee_local_idx = j
+            knee_strength = acceleration
+            break
+
+    if knee_local_idx is None:
+        x_span = float(seg_orders[-1] - seg_orders[0])
+        if x_span <= 0:
+            return None
+
+        x_norm = (seg_orders - seg_orders[0]) / x_span
+        y_norm = (seg_ratios - seg_ratios[-1]) / total_drop
+        distances = np.abs(x_norm + y_norm - 1.0) / np.sqrt(2.0)
+        if len(distances) <= 2:
+            return None
+
+        knee_local_idx = int(np.argmax(distances[1:-1]) + 1)
+        knee_strength = float(distances[knee_local_idx])
+        if knee_strength <= 0.03:
+            return None
+
+    knee_idx = peak_idx + knee_local_idx
+    return {
+        'n': int(round(float(orders[knee_idx]))),
+        'ratio': float(ratios[knee_idx]),
+        'distance': float(knee_strength),
+        'peak_n': int(round(float(orders[peak_idx]))),
+        'peak_ratio': float(ratios[peak_idx]),
+        'method': 'post-peak first sustained decline acceleration',
+    }
+
+def _stage3_recommendation_markers(options=None):
+    marker_styles = {
+        "rolloff_knee": ("#e45756", "o", "Roll-off knee"),
+        "balanced": ("#54a24b", "D", "Balanced"),
+        "best_sfs": ("#b279a2", "s", "Best SFS"),
+    }
+    markers = []
+    if not options:
+        return markers
+    for key, (color, marker, label) in marker_styles.items():
+        opt = options.get(key)
+        if opt and opt.get("n") is not None and opt.get("ratio") is not None:
+            markers.append((float(opt["n"]), float(opt["ratio"]), color, marker, label))
+    return markers
+
+def save_stage3_order_sweep_plot(orders, ratios, residuals=None, options=None, knee=None, save_path=None):
+    if not save_path:
+        return None
+
+    try:
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        save_dir = os.path.dirname(save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        orders_arr = np.asarray(orders, dtype=float)
+        ratios_arr = np.asarray(ratios, dtype=float)
+
+        fig = Figure(figsize=(10, 5))
+        FigureCanvasAgg(fig)
+        ax_ratio = fig.add_subplot(111)
+        ax_ratio.plot(orders_arr, ratios_arr, marker="o", linewidth=1.5, color="#4c78a8", label="Int/Ext ratio")
+        ax_ratio.set_xlabel("Order N")
+        ax_ratio.set_ylabel("Int/Ext ratio (dB)")
+        ax_ratio.grid(True, linestyle="--", alpha=0.35)
+        ax_ratio.set_xticks(orders_arr)
+
+        for x, y, color, marker, label in _stage3_recommendation_markers(options):
+            ax_ratio.scatter([x], [y], s=95, color=color, marker=marker, edgecolors="white", linewidths=1.1, zorder=5, label=label)
+
+        lines = ax_ratio.get_lines() + ax_ratio.collections
+        labels = [line.get_label() for line in lines if not line.get_label().startswith("_")]
+        visible_lines = [line for line in lines if not line.get_label().startswith("_")]
+        ax_ratio.legend(visible_lines, labels, loc="best")
+        ax_ratio.set_title("Stage 3 Order Sweep: Int/Ext Ratio vs Order N")
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=150)
+        return save_path
+    except Exception as e:
+        print(f"Warning: Failed to save Stage 3 order sweep plot: {e}")
+        return None
+
 def calc_internal_external_ratio(coeffs):
     eps = np.finfo(float).eps
     C_coeffs = coeffs[0::2]  
@@ -73,12 +213,18 @@ def run_open_branch_optimizer(
     test_db_transition_span: float,
     use_optimized_origins: bool = False,
     kr_offset: float = 2.0,
-    speed_of_sound: float = 343.0
+    speed_of_sound: float = 343.0,
+    save_plot: bool = True,
+    plot_save_path: str = None
 ):
     start_time = time.time()
 
     input_path = os.path.join(input_dir_opti, input_filename_opti)
     parsed_data = load_and_parse_npz(input_path)
+    saved_speed = parsed_data.get('speed_of_sound_mps')
+    if saved_speed is not None:
+        speed_of_sound = float(saved_speed)
+        print(f"Using Stage 2 speed of sound from NPZ: {speed_of_sound:g} m/s")
     f_all = parsed_data['freqs']
     data_dict = parsed_data['complex_data']
     filenames = parsed_data['filenames']
@@ -175,6 +321,7 @@ def run_open_branch_optimizer(
     best_sfs_N = n_vals[best_sfs_idx]
     best_sfs_ratio = ratio_vals[best_sfs_idx]
     best_sfs_err = err_vals[best_sfs_idx]
+    rolloff_knee = find_rolloff_knee(n_vals, ratio_vals)
     if best_sfs_ratio <= 0:
         print("WARNING: No positive Int/Ext ratio was found. Sound field separation may not be ideal; re-consider measurement settings.")
     elif best_sfs_ratio < 15.0:
@@ -183,12 +330,18 @@ def run_open_branch_optimizer(
     print("-" * 65)
     print(f"=> Order N with balanced SFS and angular detail: N={stable_N} (Ratio: {stable_ratio:.2f} dB)")
     print(f"=> Order N with best SFS and solve stability: N={best_sfs_N} (Ratio: {best_sfs_ratio:.2f} dB)")
+    if rolloff_knee:
+        print(f"=> Order N at roll-off start: N={rolloff_knee['n']} (Ratio: {rolloff_knee['ratio']:.2f} dB)")
+    else:
+        print("=> Order N at roll-off start: not detected")
 
     print("\n" + "="*65)
     print(" FINAL ORDER N OPTIONS")
     print("="*65)
     print(f"Order N with balanced SFS and angular detail: N={stable_N}, Ratio={stable_ratio:.2f} dB, Resid={err_vals[n_vals.index(stable_N)]:.2f}%")
     print(f"Order N with best SFS and solve stability: N={best_sfs_N}, Ratio={best_sfs_ratio:.2f} dB, Resid={best_sfs_err:.2f}%")
+    if rolloff_knee:
+        print(f"Order N at roll-off start: N={rolloff_knee['n']}, Ratio={rolloff_knee['ratio']:.2f} dB, Resid={err_vals[n_vals.index(rolloff_knee['n'])]:.2f}%")
     print("="*65)
 
     elapsed = time.time() - start_time
@@ -213,12 +366,48 @@ def run_open_branch_optimizer(
             'warning': option_warning,
         }
 
+    options = {
+        'balanced': step1_option("Order N with balanced SFS and angular detail", stable_N, stable_ratio, err_vals[n_vals.index(stable_N)]),
+        'best_sfs': step1_option("Order N with best SFS and solve stability", best_sfs_N, best_sfs_ratio, best_sfs_err),
+    }
+    if rolloff_knee:
+        options['rolloff_knee'] = step1_option(
+            "Order N at roll-off start",
+            rolloff_knee['n'],
+            rolloff_knee['ratio'],
+            err_vals[n_vals.index(rolloff_knee['n'])]
+        )
+        options['rolloff_knee']['warning'] = "Detected from the post-peak Int/Ext curve knee; inspect the saved plot before treating it as a hard limit."
+        options['rolloff_knee']['knee_distance'] = rolloff_knee['distance']
+        options['rolloff_knee']['method'] = rolloff_knee['method']
+
+    if save_plot and plot_save_path is None:
+        stem = os.path.splitext(input_filename_opti)[0]
+        plot_save_path = os.path.join(input_dir_opti, f"{stem}_stage3_order_sweep.png")
+    saved_plot = save_stage3_order_sweep_plot(
+        n_vals,
+        ratio_vals,
+        err_vals,
+        options=options,
+        knee=rolloff_knee,
+        save_path=plot_save_path if save_plot else None
+    )
+    if saved_plot:
+        print(f"Stage 3 order sweep plot saved to: {saved_plot}")
+
     return {
         'options': {
-            'balanced': step1_option("Order N with balanced SFS and angular detail", stable_N, stable_ratio, err_vals[n_vals.index(stable_N)]),
-            'best_sfs': step1_option("Order N with best SFS and solve stability", best_sfs_N, best_sfs_ratio, best_sfs_err),
+            **options,
+        },
+        'step1': {
+            'orders': n_vals,
+            'ratios': ratio_vals,
+            'residuals': err_vals,
+            'delta_ratios': delta_vals,
+            'rolloff_knee': rolloff_knee,
         },
         'warning': warning,
+        'plot_path': saved_plot,
     }
 
     # =========================================================================
