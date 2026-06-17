@@ -260,46 +260,47 @@ def fdwsmooth(
     if save_to_disk:
         print("Saving data to disk...")
         os.makedirs(out_dir, exist_ok=True)
+        stage3_rft_lower_hz = None
+        rft_transition_values = []
+        for row in meta.values():
+            try:
+                rft_transition_values.append(float(row.get('f_trans')))
+            except (TypeError, ValueError):
+                pass
+        if rft_transition_values:
+            stage3_rft_lower_hz = float(max(rft_transition_values))
+            print(f"Stage 3 suggested lower frequency from RFT: {stage3_rft_lower_hz:g} Hz")
+
+        def build_save_payload(data_dict):
+            payload = {
+                schema.FREQS: freqs,
+                schema.COMPLEX_DATA: data_dict,
+                schema.META: meta,
+                schema.FS: fs_common
+            }
+            if stage3_rft_lower_hz is not None:
+                payload[schema.STAGE3_RFT_LOWER_HZ] = np.array(stage3_rft_lower_hz, dtype=np.float64)
+            return payload
 
         if not enable_smoothing:
             out_path = os.path.join(out_dir, output_filename)
-            np.savez(out_path, **{
-                schema.FREQS: freqs,
-                schema.COMPLEX_DATA: results_raw,
-                schema.META: meta,
-                schema.FS: fs_common
-            })
+            np.savez(out_path, **build_save_payload(results_raw))
             print(f"Saved RAW data to {out_path}")
             
         else:
             if keep_raw_and_smoothed:
                 out_path_raw = os.path.join(out_dir, output_filename)
-                np.savez(out_path_raw, **{
-                    schema.FREQS: freqs,
-                    schema.COMPLEX_DATA: results_raw,
-                    schema.META: meta,
-                    schema.FS: fs_common
-                })
+                np.savez(out_path_raw, **build_save_payload(results_raw))
                 print(f"Saved RAW data to {out_path_raw}")
                 
                 base, ext = os.path.splitext(output_filename)
                 out_path_smooth = os.path.join(out_dir, f"{base}_smoothed{ext}")
-                np.savez(out_path_smooth, **{
-                    schema.FREQS: freqs,
-                    schema.COMPLEX_DATA: results_smooth,
-                    schema.META: meta,
-                    schema.FS: fs_common
-                })
+                np.savez(out_path_smooth, **build_save_payload(results_smooth))
                 print(f"Saved SMOOTHED data to {out_path_smooth}")
                 
             else:
                 out_path = os.path.join(out_dir, output_filename)
-                np.savez(out_path, **{
-                    schema.FREQS: freqs,
-                    schema.COMPLEX_DATA: results_smooth,
-                    schema.META: meta,
-                    schema.FS: fs_common
-                })
+                np.savez(out_path, **build_save_payload(results_smooth))
                 print(f"Saved SMOOTHED data to {out_path} (Raw discarded)")
     
     elapsed = time.time() - start_time

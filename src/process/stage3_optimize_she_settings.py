@@ -217,7 +217,8 @@ def run_open_branch_optimizer(
     kr_offset: float = 2.0,
     speed_of_sound: float = 343.0,
     save_plot: bool = True,
-    plot_save_path: str = None
+    plot_save_path: str = None,
+    use_process_pool: bool = True
 ):
     start_time = time.time()
 
@@ -263,10 +264,16 @@ def run_open_branch_optimizer(
             base_norm = np.linalg.norm(Pk)
             for N, st_db, mx_db, lam in configs:
                 tasks.append((f, Pk, r_k, th_k, ph_k, N, st_db, mx_db, lam, base_norm, speed_of_sound, kr_offset))
-                
-        ctx = multiprocessing.get_context('spawn')
-        with concurrent.futures.ProcessPoolExecutor(mp_context=ctx) as ex:
-            raw_results = list(ex.map(_worker, tasks))
+        backend = "process" if use_process_pool else "thread"
+        print(f"Stage 3 parallel backend: {backend} pool ({len(tasks)} tasks)")
+
+        if use_process_pool:
+            ctx = multiprocessing.get_context('spawn')
+            with concurrent.futures.ProcessPoolExecutor(mp_context=ctx) as ex:
+                raw_results = list(ex.map(_worker, tasks))
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as ex:
+                raw_results = list(ex.map(_worker, tasks))
             
         agg = {}
         for r in raw_results:

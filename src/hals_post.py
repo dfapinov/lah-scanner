@@ -1064,12 +1064,16 @@ class SpkrScannerApp(tk.Tk):
                             else:
                                 self.stage2_vars[k].set(str(v))
                 if "stage3_vars" in settings:
+                    loaded_stage3_keys = set(settings.get("stage3_vars", {}))
                     for k, v in settings["stage3_vars"].items():
                         if k in getattr(self, 'stage3_vars', {}):
                             if isinstance(self.stage3_vars[k], tk.BooleanVar):
                                 self.stage3_vars[k].set(bool(v))
                             else:
                                 self.stage3_vars[k].set(str(v))
+                    self._seed_stage3_start_from_npz(force=('freq_start_hz' not in loaded_stage3_keys))
+                else:
+                    self._seed_stage3_start_from_npz(force=True)
                 if "stage4_vars" in settings:
                     for k, v in settings["stage4_vars"].items():
                         if k in getattr(self, 'stage4_vars', {}):
@@ -1764,12 +1768,38 @@ class SpkrScannerApp(tk.Tk):
                 
                 print("Opening Viewer...")
                 self.after(0, launch_viewer)
+            if results:
+                self.after(0, lambda: self._seed_stage3_start_from_npz(force=True))
 
             print("Stage 1 completed successfully.")
         except Exception as e:
             print(f"Error during Stage 1: {e}")
         finally:
             self.after(0, lambda: self.btn_stage1_run.config(state=tk.NORMAL))
+
+    def _seed_stage3_start_from_npz(self, force=False):
+        if not hasattr(self, 'stage3_vars') or 'freq_start_hz' not in self.stage3_vars:
+            return
+        current = self.stage3_vars['freq_start_hz'].get().strip()
+        if not force and current:
+            return
+        npz_path = os.path.join(
+            self.project_dir.get(),
+            "outputs",
+            f"{self.project_name.get()}_complex_data.npz"
+        )
+        if not os.path.exists(npz_path):
+            return
+        try:
+            from utils import load_and_parse_npz
+            parsed = load_and_parse_npz(npz_path)
+            value = parsed.get('stage3_rft_lower_hz')
+            if value is not None:
+                import math
+                rounded_hz = max(0.0, math.ceil(float(value) / 1000.0) * 1000.0)
+                self.stage3_vars['freq_start_hz'].set(f"{rounded_hz:.1f}")
+        except Exception as e:
+            print(f"Warning: Could not seed Stage 3 start frequency from Stage 1 metadata: {e}")
 
     def _build_stage2_ui(self):
         canvas = tk.Canvas(self.tab_stage2, highlightthickness=0, bg=SETTINGS_CANVAS_BG)
@@ -2060,7 +2090,7 @@ class SpkrScannerApp(tk.Tk):
         f_start_frame = ttk.Frame(freq_frame); f_start_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         f_end_frame = ttk.Frame(freq_frame); f_end_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         self.stage3_vars['freq_start_hz'] = self._add_form_entry(f_start_frame, "Start Frequency (Hz):", "10000.0", "Lower boundary of the Stage 3 order test.")
-        self.stage3_vars['freq_end_hz'] = self._add_form_entry(f_end_frame, "End Frequency (Hz):", "20000.0", "Upper boundary of the Stage 3 order test.")
+        self.stage3_vars['freq_end_hz'] = self._add_form_entry(f_end_frame, "End Frequency (Hz):", "10000.0", "Upper boundary of the Stage 3 order test.")
         stage3_range_note = ttk.Label(
             self.stage3_adv_frame,
             text="Note: The Stage 3 frequency range should be entirely within the reflection-free time/range.",
@@ -2122,7 +2152,8 @@ class SpkrScannerApp(tk.Tk):
                 test_db_transition_span=20.0,
                 use_optimized_origins=True,
                 speed_of_sound=343.0,
-                kr_offset=2.0
+                kr_offset=2.0,
+                use_process_pool=False
             )
 
             self.after(0, lambda: self._show_stage3_choice_popup(optimizer_result))

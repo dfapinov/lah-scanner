@@ -100,6 +100,7 @@ def load_and_parse_npz(filepath: Union[str, Path]) -> Dict:
         'ph_arr': np.array(ph_list),
         'origins_mm': loaded[schema.ORIGINS_MM] if schema.ORIGINS_MM in loaded else None,
         'speed_of_sound_mps': loaded[schema.SPEED_OF_SOUND_MPS].item() if schema.SPEED_OF_SOUND_MPS in loaded else None,
+        'stage3_rft_lower_hz': loaded[schema.STAGE3_RFT_LOWER_HZ].item() if schema.STAGE3_RFT_LOWER_HZ in loaded else None,
         'fs': loaded[schema.FS].item() if schema.FS in loaded else None,
         'raw_data': loaded
     }

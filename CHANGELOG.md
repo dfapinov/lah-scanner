@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.2.12] - 2026-06-17
+Changed: Stage 3 now seeds its lower frequency from the Stage 1 reflection-free transition metadata, rounded up to the next whole kHz. The default Stage 3 upper frequency is now 10 kHz instead of 20 kHz.
+Fixed: Stage 2 and Stage 3 GUI runs now avoid importing or spawning Tk/TkAgg UI code inside worker processes, preventing Tk/Tcl thread cleanup errors when rerunning processing stages.
+
 ## [2.2.11] - 2026-06-17
 Added: Stage 3 now supports a custom frequency range for the order-N search, with a UI note that the selected range should sit entirely within the reflection-free time/range.
 Fixed: Project JSON handling now preserves the discovered project file path, including project names that use `-` or `_`, and merges saves without overwriting unrecognized keys.

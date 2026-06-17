@@ -115,7 +115,6 @@ from scipy.optimize import minimize
 import schema
 
 from utils import translate_coordinates, load_and_parse_npz, get_grid_limit, get_kr_limit
-from viewers import ValidationUI
 
 # --- Import Core Solver & Config ---
 try:
@@ -832,6 +831,7 @@ def run_origin_search(
     # --- PLOT 1: Build the Summary Validation Graph (Macro View) ---
     if plot_results_origins:
         print("\nOpening Validation UI...")
+        from viewers import ValidationUI
         save_path = os.path.splitext(os.path.join(input_dir_origins, output_filename_origins))[0] + "_origins.png" if save_to_disk else None
         ui = ValidationUI(sweep_results, f_all, keys, d_dict, (r_arr, th_arr, ph_arr), cfg, save_path=save_path)
         
