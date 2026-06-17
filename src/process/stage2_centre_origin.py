@@ -70,6 +70,7 @@ Input Arguments:
     use_cache (bool): Read previously computed results from a .pkl cache file.
     read_cache_file (str): Path to the cache file.
     enable_full_grid_scan (bool): Run the heavy 3D volumetric landscape rendering.
+    optimize_speed_of_sound (bool): Run the Stage 2 speed-of-sound optimizer before the origin sweep.
 
 Returns:
     origins_full (np.ndarray | None): Array of interpolated [X, Y, Z] origins across the full FFT frequency resolution, or None if validation was rejected.
@@ -620,6 +621,7 @@ def run_origin_search(
     read_cache_file: str = "origins_cache_3D.pkl",
     enable_full_grid_scan: bool = False,
     kr_offset: float = 2.0,
+    optimize_speed_of_sound: bool = True,
     return_state: bool = False
 ):
     stage_start_time = time.time()
@@ -667,55 +669,60 @@ def run_origin_search(
     actual_freqs_asc, f_indices_asc = build_stage2_frequency_targets(f_all, freq_start_hz, freq_end_hz, octave_resolution)
 
     if not actual_freqs_asc:
-        raise ValueError("Stage 2 frequency range produced no probe frequency for speed optimization.")
+        if optimize_speed_of_sound:
+            raise ValueError("Stage 2 frequency range produced no probe frequency for speed optimization.")
+        raise ValueError("Stage 2 frequency range produced no origin search frequencies.")
 
-    speed_probe_bins = select_speed_of_sound_probe_bins(
-        actual_freqs_asc,
-        f_indices_asc,
-        count=6,
-        min_freq_hz=5000.0,
-        max_freq_hz=10000.0
-    )
-    candidates = build_speed_of_sound_candidates(
-        center_mps=343.0,
-        half_range_mps=12.0,
-        step_mps=1.0
-    )
-
-    print("\n--- Speed of Sound Optimization ---")
-    print("Probe frequencies from 5 kHz to 10 kHz with non-coherent wavelength ratios:")
-    for probe_freq, _probe_index in speed_probe_bins:
-        print(f"  {probe_freq:.1f} Hz")
-    probe_data = [
-        (probe_freq, [d_dict[k][probe_index] for k in keys])
-        for probe_freq, probe_index in speed_probe_bins
-    ]
-
-    coarse_results = run_speed_of_sound_candidate_batch(
-        "Coarse pass",
-        candidates,
-        probe_data,
-        tweeter_coords_mm,
-        r_arr,
-        th_arr,
-        ph_arr,
-        cfg
-    )
-    candidate_scores = score_speed_of_sound_candidates(coarse_results)
-    best_candidate = min(candidate_scores, key=lambda item: item['score'])
-    best_speed = best_candidate['speed']
-    best_error = best_candidate['mean_error']
-    print("\nSpeed-of-sound optimization results:")
-    for row in candidate_scores:
-        candidate_speed = row['speed']
-        marker = " <== selected" if candidate_speed == best_speed else ""
-        print(
-            f"  {candidate_speed:>8.3f} m/s : score={row['score']:>8.3f} "
-            f"mean={row['mean_error']:>8.3f}% worst={row['worst_error']:>8.3f}%{marker}"
+    if optimize_speed_of_sound:
+        speed_probe_bins = select_speed_of_sound_probe_bins(
+            actual_freqs_asc,
+            f_indices_asc,
+            count=6,
+            min_freq_hz=5000.0,
+            max_freq_hz=10000.0
         )
-    print(f"Selected speed of sound: {best_speed:g} m/s (mean fit error {best_error:.3f}%, score {best_candidate['score']:.3f})\n")
-    speed_of_sound = best_speed
-    cfg['speed_of_sound'] = speed_of_sound
+        candidates = build_speed_of_sound_candidates(
+            center_mps=343.0,
+            half_range_mps=12.0,
+            step_mps=1.0
+        )
+
+        print("\n--- Speed of Sound Optimization ---")
+        print("Probe frequencies from 5 kHz to 10 kHz with non-coherent wavelength ratios:")
+        for probe_freq, _probe_index in speed_probe_bins:
+            print(f"  {probe_freq:.1f} Hz")
+        probe_data = [
+            (probe_freq, [d_dict[k][probe_index] for k in keys])
+            for probe_freq, probe_index in speed_probe_bins
+        ]
+
+        coarse_results = run_speed_of_sound_candidate_batch(
+            "Coarse pass",
+            candidates,
+            probe_data,
+            tweeter_coords_mm,
+            r_arr,
+            th_arr,
+            ph_arr,
+            cfg
+        )
+        candidate_scores = score_speed_of_sound_candidates(coarse_results)
+        best_candidate = min(candidate_scores, key=lambda item: item['score'])
+        best_speed = best_candidate['speed']
+        best_error = best_candidate['mean_error']
+        print("\nSpeed-of-sound optimization results:")
+        for row in candidate_scores:
+            candidate_speed = row['speed']
+            marker = " <== selected" if candidate_speed == best_speed else ""
+            print(
+                f"  {candidate_speed:>8.3f} m/s : score={row['score']:>8.3f} "
+                f"mean={row['mean_error']:>8.3f}% worst={row['worst_error']:>8.3f}%{marker}"
+            )
+        print(f"Selected speed of sound: {best_speed:g} m/s (mean fit error {best_error:.3f}%, score {best_candidate['score']:.3f})\n")
+        speed_of_sound = best_speed
+        cfg['speed_of_sound'] = speed_of_sound
+    else:
+        print(f"\nSpeed-of-sound optimization skipped. Using custom project value: {speed_of_sound:g} m/s")
 
     sweep_results = None
 

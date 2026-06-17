@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.2.11] - 2026-06-17
+Added: Stage 3 now supports a custom frequency range for the order-N search, with a UI note that the selected range should sit entirely within the reflection-free time/range.
+Fixed: Project JSON handling now preserves the discovered project file path, including project names that use `-` or `_`, and merges saves without overwriting unrecognized keys.
+
 ## [2.2.10] - 2026-06-16
 Changed: Stage 2 speed-of-sound optimization now scores each candidate across six non-coherent probe bins from 5 kHz to 10 kHz. Speed-of-sound selection uses
 mean fit error across the probe bins with a small worst-bin penalty.

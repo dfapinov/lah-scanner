@@ -211,6 +211,8 @@ def run_open_branch_optimizer(
     test_start_db_range: tuple,
     test_lambda_range: tuple,
     test_db_transition_span: float,
+    freq_start_hz: float = 10000.0,
+    freq_end_hz: float = 20000.0,
     use_optimized_origins: bool = False,
     kr_offset: float = 2.0,
     speed_of_sound: float = 343.0,
@@ -238,8 +240,18 @@ def run_open_branch_optimizer(
     use_opt = use_optimized_origins
     origins_mm = parsed_data['origins_mm'] if (use_opt and parsed_data['origins_mm'] is not None) else np.zeros((len(f_all), 3))
 
-    idx_target = np.where((f_all >= 10000.0) & (f_all <= 20000.0))[0]
-    test_indices = np.linspace(idx_target[0], idx_target[-1], 12, dtype=int)
+    if freq_start_hz > freq_end_hz:
+        freq_start_hz, freq_end_hz = freq_end_hz, freq_start_hz
+
+    idx_target = np.where((f_all >= freq_start_hz) & (f_all <= freq_end_hz))[0]
+    if len(idx_target) == 0:
+        raise ValueError(
+            f"Stage 3 frequency range {freq_start_hz:g}-{freq_end_hz:g} Hz "
+            f"does not contain any frequency bins from {f_all[0]:g}-{f_all[-1]:g} Hz."
+        )
+    sample_count = min(12, len(idx_target))
+    test_indices = np.unique(np.linspace(idx_target[0], idx_target[-1], sample_count, dtype=int))
+    print(f"Stage 3 order test frequency range: {freq_start_hz:g}-{freq_end_hz:g} Hz ({len(test_indices)} sample frequencies)")
 
     def run_batch(configs):
         tasks = []

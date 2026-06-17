@@ -49,6 +49,21 @@ GUI_TOOLTIPS = {
     'use_optimized_origins_stage5': "Uses the frequency-dependent acoustic origins calculated in Stage 2 to extract the most accurate phase."
 }
 
+SPEED_OF_SOUND_TOOLTIP = "\n".join([
+    "Speed of sound in air:",
+    "338 m/s  approx 10 C",
+    "339 m/s  approx 11.5 C",
+    "340 m/s  approx 13 C",
+    "341 m/s  approx 15 C",
+    "342 m/s  approx 16.5 C",
+    "343 m/s  approx 18 C",
+    "344 m/s  approx 20 C",
+    "345 m/s  approx 21.5 C",
+    "346 m/s  approx 23 C",
+    "347 m/s  approx 25 C",
+    "348 m/s  approx 26.5 C",
+])
+
 
 class QueueRedirector:
     def __init__(self, queue_obj, original_stream=None, log_file_obj=None):
@@ -226,6 +241,8 @@ class SpkrScannerApp(tk.Tk):
         # Shared Data States
         self.project_dir = tk.StringVar(value=os.getcwd())
         self.project_name = tk.StringVar(value="MySpeaker")
+        self.project_file_path = None
+        self.project_settings = {}
         # Track state for pop-up UI viewers
         self.stage5_viewer = None
         self.stage5_canvas = None
@@ -589,6 +606,7 @@ class SpkrScannerApp(tk.Tk):
 
     def _build_project_metadata_ui(self):
         self.grid_vars = {}
+        self.global_vars = {}
         self.user_positions = []
 
         main_container = ttk.Frame(self.tab_project_meta, padding="10")
@@ -625,6 +643,35 @@ class SpkrScannerApp(tk.Tk):
             self.grid_vars[f'wp_{prefix}_r'] = _add_wp_entry(row, 1)
             self.grid_vars[f'wp_{prefix}_phi'] = _add_wp_entry(row, 2)
             self.grid_vars[f'wp_{prefix}_z'] = _add_wp_entry(row, 3)
+
+        global_frame = ttk.LabelFrame(main_container, text="Global Settings", padding="10")
+        global_frame.pack(side=tk.TOP, fill=tk.X, pady=(8, 5))
+
+        self.global_vars['enable_manual_speed_of_sound'] = tk.BooleanVar(value=False)
+        speed_check = ttk.Checkbutton(
+            global_frame,
+            text="Enable Manual Speed of Sound",
+            variable=self.global_vars['enable_manual_speed_of_sound']
+        )
+        speed_check.pack(side=tk.LEFT, padx=(0, 14))
+
+        speed_label = ttk.Label(global_frame, text="Speed of Sound (m/s):")
+        speed_label.pack(side=tk.LEFT, padx=(0, 10))
+        self.global_vars['speed_of_sound'] = tk.StringVar(value="343")
+        speed_entry = ttk.Entry(global_frame, textvariable=self.global_vars['speed_of_sound'], width=12)
+        speed_entry.pack(side=tk.LEFT)
+        speed_entry.bind("<FocusOut>", self._on_project_metadata_changed)
+        speed_entry.bind("<Return>", self._on_project_metadata_changed)
+        speed_check.config(command=lambda: [update_speed_state(), self._on_project_metadata_changed()])
+        def update_speed_state(*args):
+            state = tk.NORMAL if self.global_vars['enable_manual_speed_of_sound'].get() else tk.DISABLED
+            speed_entry.config(state=state)
+            speed_label.config(state=state)
+        self.global_vars['enable_manual_speed_of_sound'].trace_add("write", update_speed_state)
+        update_speed_state()
+        ToolTip(speed_check, "Use the entered speed of sound instead of the default 343 m/s.")
+        ToolTip(speed_label, SPEED_OF_SOUND_TOOLTIP)
+        ToolTip(speed_entry, SPEED_OF_SOUND_TOOLTIP)
 
         add_frame = ttk.LabelFrame(main_container, text="User Positions", padding="10")
         add_frame.pack(side=tk.TOP, fill=tk.X, pady=(8, 5))
@@ -839,20 +886,49 @@ class SpkrScannerApp(tk.Tk):
     def _action_save_project(self):
         if DEBUG_MODE:
             print("[DEBUG] Action: Save Project")
-        self._save_settings()
-        proj_name = self.project_name.get().strip() or "scanner"
-        save_path = os.path.join(self.project_dir.get(), f"{proj_name}_project.json")
+        save_path = self._save_settings()
         self.status_var.set(f"Project Saved: {save_path}")
 
     def _save_project_if_not_exists(self):
-        proj_name = self.project_name.get().strip() or "scanner"
-        save_path = os.path.join(self.project_dir.get(), f"{proj_name}_project.json")
+        save_path = self._get_project_save_path()
         if not os.path.exists(save_path):
             if DEBUG_MODE:
                 print(f"[DEBUG] Auto-saving initial project settings to {save_path}")
             self._save_settings()
 
+    def _get_project_save_path(self):
+        project_path = getattr(self, 'project_file_path', None)
+        if project_path:
+            return project_path
+        proj_name = self.project_name.get().strip() or "scanner"
+        return os.path.join(self.project_dir.get(), f"{proj_name}_project.json")
+
+    def _read_existing_project_settings(self, save_path):
+        for candidate in (save_path, getattr(self, 'project_file_path', None)):
+            if not candidate or not os.path.exists(candidate):
+                continue
+            try:
+                with open(candidate, "r") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    return loaded
+            except Exception as e:
+                print(f"Warning: Could not read existing project settings for merge: {e}")
+        return dict(getattr(self, 'project_settings', {}) or {})
+
+    def _merged_section(self, base_settings, section_name, current_values):
+        existing = base_settings.get(section_name, {})
+        if isinstance(existing, dict):
+            merged = dict(existing)
+        else:
+            merged = {}
+        merged.update(current_values)
+        return merged
+
     def _save_settings(self):
+        save_path = self._get_project_save_path()
+        base_settings = self._read_existing_project_settings(save_path)
+
         stage5_vars = getattr(self, 'stage5_vars', {})
         mic_cal_var = stage5_vars.get('mic_cal_file')
         mic_cal_path = mic_cal_var.get() if mic_cal_var else ""
@@ -873,30 +949,55 @@ class SpkrScannerApp(tk.Tk):
         if hasattr(self, 'user_positions'):
             grid_settings['user_positions'] = self.user_positions
 
-        settings = {
-            "project_name": self.project_name.get(),
-            "grid_vars": grid_settings,
-            "stage1_vars": {k: v.get() for k, v in getattr(self, 'stage1_vars', {}).items()},
-            "stage2_vars": {k: v.get() for k, v in getattr(self, 'stage2_vars', {}).items()},
-            "stage3_vars": {k: v.get() for k, v in getattr(self, 'stage3_vars', {}).items()},
-            "stage4_vars": {k: v.get() for k, v in getattr(self, 'stage4_vars', {}).items()},
-            "stage5_vars": {k: v.get() for k, v in getattr(self, 'stage5_vars', {}).items()},
-            "stage5_gui_units": "mm",
-            "stage4_manual_table": {str(k): v for k, v in getattr(self, 'stage4_manual_table', {}).items()},
-            "mic_cal_fallback": fallback_content
-        }
+        settings = dict(base_settings)
+        settings["project_name"] = self.project_name.get()
+        settings["global_vars"] = self._merged_section(
+            base_settings,
+            "global_vars",
+            {k: v.get() for k, v in getattr(self, 'global_vars', {}).items()},
+        )
+        settings["grid_vars"] = self._merged_section(base_settings, "grid_vars", grid_settings)
+        settings["stage1_vars"] = self._merged_section(
+            base_settings,
+            "stage1_vars",
+            {k: v.get() for k, v in getattr(self, 'stage1_vars', {}).items()},
+        )
+        settings["stage2_vars"] = self._merged_section(
+            base_settings,
+            "stage2_vars",
+            {k: v.get() for k, v in getattr(self, 'stage2_vars', {}).items()},
+        )
+        settings["stage3_vars"] = self._merged_section(
+            base_settings,
+            "stage3_vars",
+            {k: v.get() for k, v in getattr(self, 'stage3_vars', {}).items()},
+        )
+        settings["stage4_vars"] = self._merged_section(
+            base_settings,
+            "stage4_vars",
+            {k: v.get() for k, v in getattr(self, 'stage4_vars', {}).items()},
+        )
+        settings["stage5_vars"] = self._merged_section(
+            base_settings,
+            "stage5_vars",
+            {k: v.get() for k, v in getattr(self, 'stage5_vars', {}).items()},
+        )
+        settings["stage5_gui_units"] = "mm"
+        settings["stage4_manual_table"] = {str(k): v for k, v in getattr(self, 'stage4_manual_table', {}).items()}
+        settings["mic_cal_fallback"] = fallback_content
 
         if DEBUG_MODE and hasattr(self, 'debug_log_file') and self.debug_log_file:
             self.debug_log_file.write(f"[DEBUG] Saving project settings:\n{json.dumps(settings, indent=4)}\n")
             self.debug_log_file.flush()
 
-        proj_name = self.project_name.get().strip() or "scanner"
-        save_path = os.path.join(self.project_dir.get(), f"{proj_name}_project.json")
         try:
             with open(save_path, "w") as f:
                 json.dump(settings, f, indent=4)
+            self.project_file_path = save_path
+            self.project_settings = settings
         except Exception as e:
             print(f"Warning: Failed to save project settings: {e}")
+        return save_path
 
     def _load_settings(self, directory, notify_metadata=True):
         proj_name = self.project_name.get().strip() or "scanner"
@@ -920,6 +1021,8 @@ class SpkrScannerApp(tk.Tk):
             try:
                 with open(load_path, "r") as f:
                     settings = json.load(f)
+                self.project_file_path = load_path
+                self.project_settings = settings
 
                 if DEBUG_MODE and hasattr(self, 'debug_log_file') and self.debug_log_file:
                     self.debug_log_file.write(f"[DEBUG] Loaded settings:\n{json.dumps(settings, indent=4)}\n")
@@ -927,6 +1030,13 @@ class SpkrScannerApp(tk.Tk):
 
                 if "project_name" in settings:
                     self.project_name.set(settings["project_name"])
+                if "global_vars" in settings:
+                    for k, v in settings["global_vars"].items():
+                        if k in getattr(self, 'global_vars', {}):
+                            if isinstance(self.global_vars[k], tk.BooleanVar):
+                                self.global_vars[k].set(str(v).strip().lower() in {"1", "true", "yes", "on"})
+                            else:
+                                self.global_vars[k].set(str(v))
                 if "grid_vars" in settings:
                     for k, v in settings["grid_vars"].items():
                         if k in getattr(self, 'grid_vars', {}):
@@ -1001,6 +1111,8 @@ class SpkrScannerApp(tk.Tk):
             except Exception as e:
                 print(f"Warning: Failed to load project settings: {e}")
         else:
+            self.project_file_path = None
+            self.project_settings = {}
             if notify_metadata:
                 self._reconcile_project_folder_metadata(project_exists=False, notify=True)
             self._refresh_user_positions_view()
@@ -1806,6 +1918,10 @@ class SpkrScannerApp(tk.Tk):
             sim_step = float(self.stage2_vars['initial_simplex_step'].get())
             max_iter = int(self.stage2_vars['max_iterations'].get())
             plot_results = self.stage2_vars['plot_results_origins'].get()
+            speed_var = getattr(self, 'global_vars', {}).get('speed_of_sound')
+            manual_speed_var = getattr(self, 'global_vars', {}).get('enable_manual_speed_of_sound')
+            use_manual_speed = bool(manual_speed_var.get()) if manual_speed_var is not None else False
+            selected_speed = float(speed_var.get()) if use_manual_speed and speed_var is not None else 343.0
             
             from stage2_centre_origin import run_origin_search, export_interpolated_origins
             
@@ -1827,6 +1943,8 @@ class SpkrScannerApp(tk.Tk):
                 manual_order_table=None,
                 save_to_disk=True,
                 plot_results_origins=False,  # Prevent blocking Tkinter in thread
+                speed_of_sound=selected_speed,
+                optimize_speed_of_sound=not use_manual_speed,
                 return_state=True
             )
             
@@ -1937,6 +2055,19 @@ class SpkrScannerApp(tk.Tk):
         self.stage3_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
         
         self.stage3_vars['test_order_range'] = self._add_form_entry(self.stage3_adv_frame, "Test Order Range (min, max):", "2, 15", "Range of orders N to test.")
+        freq_frame = ttk.Frame(self.stage3_adv_frame)
+        freq_frame.pack(side=tk.TOP, fill=tk.X)
+        f_start_frame = ttk.Frame(freq_frame); f_start_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        f_end_frame = ttk.Frame(freq_frame); f_end_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        self.stage3_vars['freq_start_hz'] = self._add_form_entry(f_start_frame, "Start Frequency (Hz):", "10000.0", "Lower boundary of the Stage 3 order test.")
+        self.stage3_vars['freq_end_hz'] = self._add_form_entry(f_end_frame, "End Frequency (Hz):", "20000.0", "Upper boundary of the Stage 3 order test.")
+        stage3_range_note = ttk.Label(
+            self.stage3_adv_frame,
+            text="Note: The Stage 3 frequency range should be entirely within the reflection-free time/range.",
+            font=("Arial", 9, "italic"),
+            justify=tk.LEFT
+        )
+        stage3_range_note.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(2, 8))
 
         # --- Button ---
         self.btn_stage3_run = ttk.Button(main_container, text="Run Stage 3", command=self._action_run_stage3)
@@ -1975,6 +2106,8 @@ class SpkrScannerApp(tk.Tk):
                 return (int(parts[0]), int(parts[1]))
 
             order_range = parse_bounds_int(self.stage3_vars['test_order_range'].get())
+            freq_start_hz = float(self.stage3_vars['freq_start_hz'].get())
+            freq_end_hz = float(self.stage3_vars['freq_end_hz'].get())
 
             from stage3_optimize_she_settings import run_open_branch_optimizer
             
@@ -1982,6 +2115,8 @@ class SpkrScannerApp(tk.Tk):
                 input_dir_opti=input_dir,
                 input_filename_opti=input_filename,
                 test_order_range=order_range,
+                freq_start_hz=freq_start_hz,
+                freq_end_hz=freq_end_hz,
                 test_start_db_range=(-20.0, -60.0),
                 test_lambda_range=(0.0000001, 0.01),
                 test_db_transition_span=20.0,
