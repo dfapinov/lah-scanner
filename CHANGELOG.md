@@ -1,5 +1,8 @@
 # Changelog
 
+## [2.2.13] - 2026-06-19
+Fixed: Stage 3 GUI runs now clamp OpenBLAS/MKL/OMP thread counts before scientific libraries are imported and cap the Stage 3 thread-pool worker count, preserving multi-core solving while avoiding native math oversubscription and `init_gesdd failed init` errors.
+
 ## [2.2.12] - 2026-06-17
 Changed: Stage 3 now seeds its lower frequency from the Stage 1 reflection-free transition metadata, rounded up to the next whole kHz. The default Stage 3 upper frequency is now 10 kHz instead of 20 kHz.
 Fixed: Stage 2 and Stage 3 GUI runs now avoid importing or spawning Tk/TkAgg UI code inside worker processes, preventing Tk/Tcl thread cleanup errors when rerunning processing stages.

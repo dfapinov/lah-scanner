@@ -1,6 +1,16 @@
 ﻿import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
+
+# Clamp native math libraries before importing NumPy/SciPy/Matplotlib anywhere
+# in the GUI process. Stage-local clamps are too late if the GUI has already
+# initialized OpenBLAS/MKL through an earlier import.
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
 import sys
 import traceback
 import json
@@ -2167,8 +2177,8 @@ class SpkrScannerApp(tk.Tk):
         if isinstance(optimizer_result, tuple):
             target_n_max, noise_floor_start_db, noise_floor_max_db, max_lambda = optimizer_result
             options = {
-                "balanced": {
-                    "label": "Order N with balanced SFS and angular detail",
+                "best_sfs": {
+                    "label": "Order N with best SFS and solve stability",
                     "n": target_n_max,
                     "st": noise_floor_start_db,
                     "mx": noise_floor_max_db,
@@ -2210,7 +2220,6 @@ class SpkrScannerApp(tk.Tk):
 
             marker_styles = {
                 "rolloff_knee": ("#e45756", "o", "Roll-off knee"),
-                "balanced": ("#54a24b", "D", "Balanced"),
                 "best_sfs": ("#b279a2", "s", "Best SFS"),
             }
             for key, (color, marker, label) in marker_styles.items():
@@ -2239,10 +2248,10 @@ class SpkrScannerApp(tk.Tk):
         if plot_path:
             ttk.Label(frame, text=f"Saved plot: {plot_path}", wraplength=720).pack(anchor=tk.W, pady=(0, 8))
 
-        default_choice = "rolloff_knee" if "rolloff_knee" in options else ("balanced" if "balanced" in options else next(iter(options.keys())))
+        default_choice = "rolloff_knee" if "rolloff_knee" in options else next(iter(options.keys()))
         choice_var = tk.StringVar(value=default_choice)
 
-        for key in ["rolloff_knee", "balanced", "best_sfs"]:
+        for key in ["rolloff_knee", "best_sfs"]:
             opt = options.get(key)
             if not opt:
                 continue
