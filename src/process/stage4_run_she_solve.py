@@ -25,6 +25,7 @@ import sys
 import time
 import importlib
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional, Tuple, Dict
 from multiprocessing import Pool, cpu_count, get_context
@@ -44,7 +45,6 @@ import schema
 try:
     from she_solver_core import _solve_one_frequency
     from utils import translate_coordinates, load_and_parse_npz, get_grid_limit, get_kr_limit
-    from viewers import plot_she_results
 except ImportError as e:
     sys.exit(f"Error: Could not import required module. {e}")
 
@@ -151,7 +151,8 @@ def run_she_solve(
     speed_of_sound: float = None,
     kr_offset: float = 2.0,
     jobs: int = None,
-    show_plot: bool = True
+    show_plot: bool = True,
+    use_process_pool: bool = True
 ) -> Dict:
     start_time = time.time()
 
@@ -248,7 +249,8 @@ def run_she_solve(
     res_resid, res_cond, res_N = np.zeros(K), np.zeros(K), np.zeros(K, int)
     res_resid_vec = np.zeros((K, len(keys)), complex)
 
-    logging.info(f"Solving {K} bins on {jobs} physical cores...")
+    backend = "processes" if use_process_pool else "threads"
+    logging.info(f"Solving {K} bins with {jobs} {backend}...")
     tasks = []
     for k in range(K):
         # Calculate translated spherical coordinates for this specific frequency bin
@@ -257,12 +259,24 @@ def run_she_solve(
         tasks.append((k, f_sel[k], P[k], r_k, th_k, ph_k, N_grid, worker_cfg))
     
     # 6. Execution
-    with get_context('spawn').Pool(processes=jobs, initializer=_init_worker, initargs=(log_file_path,)) as pool:
-        for k, cfs, resid, cond, n_val, r_vec, log_msg in pool.imap_unordered(_worker_wrapper, tasks):
+    def consume_results(results_iter):
+        for k, cfs, resid, cond, n_val, r_vec, log_msg in results_iter:
             res_coeffs[k, :len(cfs)] = cfs
             res_resid[k], res_cond[k], res_N[k] = resid, cond, n_val
             res_resid_vec[k, :] = r_vec
             logging.info(log_msg)
+
+    if use_process_pool:
+        ctx = get_context('spawn')
+        with ctx.Pool(
+            processes=jobs,
+            initializer=_init_worker,
+            initargs=(log_file_path,)
+        ) as pool:
+            consume_results(pool.imap_unordered(_worker_wrapper, tasks))
+    else:
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            consume_results(executor.map(_worker_wrapper, tasks))
 
     bn = np.linalg.norm(P, axis=1)
     pct_error = res_resid / np.maximum(bn, 1e-20) * 100.0
@@ -289,6 +303,7 @@ def run_she_solve(
 
     # 8. Plot Fit Error and Condition Metrics
     if show_plot:
+        from viewers import plot_she_results
         save_path_prefix = os.path.join(input_dir_she, os.path.splitext(output_filename_she)[0]) if save_to_disk else None
         she_dict = {
             schema.FREQS: f_sel,

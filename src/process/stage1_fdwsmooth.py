@@ -70,11 +70,9 @@ import soundfile as sf
 from scipy.fft import next_fast_len
 import functools
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import schema
 from utils import natural_keys
-from viewers import FDWViewer
-
 from fdw_smoothing_core import (
     calculate_fdw_durations, get_earliest_significant_peak,
     process_single_ir, apply_complex_smoothing
@@ -149,7 +147,8 @@ def fdwsmooth(
     peak_detect_threshold_db=-12.0,
     enable_auto_gain=True,
     target_peak_db=-3.0,
-    keep_raw_and_smoothed=False
+    keep_raw_and_smoothed=False,
+    use_process_pool=True
 ):
     """
     Main pipeline function that orchestrates the scanning, parallel processing,
@@ -203,7 +202,8 @@ def fdwsmooth(
     num_workers = os.cpu_count() or 1
     
     print(f"Configuration: N_fft={n_fft}, Freq Bins={len(freqs)}, Gain={20*np.log10(gain):.2f}dB")
-    print(f"Parallel Processing: Using {num_workers} processes.")
+    backend = "processes" if use_process_pool else "threads"
+    print(f"Parallel Processing: Using {num_workers} {backend}.")
 
     results_raw, results_smooth, meta = {}, {}, {}
     
@@ -230,8 +230,13 @@ def fdwsmooth(
     file_infos = [(f, peaks_cache[f]) for f in wav_files]
     
     # ---- Parallel processing of individual files ----
-    ctx = multiprocessing.get_context('spawn')
-    with ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx) as executor:
+    if use_process_pool:
+        ctx = multiprocessing.get_context('spawn')
+        executor_context = ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx)
+    else:
+        executor_context = ThreadPoolExecutor(max_workers=num_workers)
+
+    with executor_context as executor:
         for i, (fname, H_raw, H_smooth, m) in enumerate(executor.map(worker_task, file_infos)):
             sys.stdout.write(f"\rCompleted {i+1}/{len(wav_files)}: {fname}\033[K")
             sys.stdout.flush()
@@ -309,6 +314,7 @@ def fdwsmooth(
     # Optional plotting of the resulting Frequency Domain representation
     if show_plot: 
         print("Opening Viewer...")
+        from viewers import FDWViewer
         FDWViewer(freqs, plot_data, meta, fs_common, ir_dir, crop_samples, data_dict_smooth=plot_smooth, fdw_f_min=fdw_f_min, fdw_rft_ms=fdw_rft_ms)
 
     return freqs, results_raw, results_smooth, meta

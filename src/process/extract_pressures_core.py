@@ -12,6 +12,7 @@ import math
 import multiprocessing
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Tuple, Union, Dict
 
@@ -103,7 +104,8 @@ def evaluate_she_field(
     obs_mode: str = "Internal",
     c_sound: float = 343.0,
     use_optimized_origins: bool = True,
-    corr_ir_pad_phase: bool = True
+    corr_ir_pad_phase: bool = True,
+    use_process_pool: bool = True
 ) -> Dict[str, np.ndarray]:
     
     data = load_she_h5(she_input)
@@ -144,11 +146,10 @@ def evaluate_she_field(
                       r_base, theta_base, phi_base, origins_mm[chunk_idx], obs_mode, c_sound))
 
     pressures_all = np.zeros((num_freqs, num_pts), dtype=np.complex128)
-    print(f"Starting parallel solve on {num_cpus} cores ({num_pts} points)...")
-    
-    ctx = multiprocessing.get_context('spawn')
-    with ctx.Pool(processes=num_cpus) as pool:
-        results_iter = pool.imap(func=_worker_calc_chunk, iterable=tasks)
+    backend = "processes" if use_process_pool else "threads"
+    print(f"Starting parallel solve with {num_cpus} {backend} ({num_pts} points)...")
+
+    def consume_results(results_iter):
         total_tasks = len(tasks)
         for i, result in enumerate(results_iter):
             idx_range, p_chunk = result
@@ -156,6 +157,14 @@ def evaluate_she_field(
             percent = ((i + 1) / total_tasks) * 100
             sys.stdout.write(f"\rProgress: {percent:5.1f}% complete")
             sys.stdout.flush()
+
+    if use_process_pool:
+        ctx = multiprocessing.get_context('spawn')
+        with ctx.Pool(processes=num_cpus) as pool:
+            consume_results(pool.imap(func=_worker_calc_chunk, iterable=tasks))
+    else:
+        with ThreadPoolExecutor(max_workers=num_cpus) as executor:
+            consume_results(executor.map(_worker_calc_chunk, tasks))
             
     print("\nCalculation complete.")
 

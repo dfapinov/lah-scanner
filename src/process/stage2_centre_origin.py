@@ -310,7 +310,10 @@ def _worker_speed_of_sound_candidate(args):
     mean_error = float(np.mean(finite_errors)) if finite_errors else float('inf')
     return float(candidate_speed), mean_error, probe_results
 
-def run_speed_of_sound_candidate_batch(label, candidates, probe_data, tweeter_coords_mm, r_arr, th_arr, ph_arr, cfg):
+def run_speed_of_sound_candidate_batch(
+    label, candidates, probe_data, tweeter_coords_mm, r_arr, th_arr, ph_arr, cfg,
+    use_process_pool=True
+):
     workers = min(cpu_count(), len(candidates))
     print(f"\n{label}: {candidates[0]:g} to {candidates[-1]:g} m/s ({len(candidates)} candidates)")
     print(f"Parallel candidate workers: {workers}")
@@ -319,11 +322,13 @@ def run_speed_of_sound_candidate_batch(label, candidates, probe_data, tweeter_co
         (float(candidate_speed), probe_data, tweeter_coords_mm, r_arr, th_arr, ph_arr, cfg)
         for candidate_speed in candidates
     ]
-    results = []
-    ctx = get_context('spawn')
-    with ctx.Pool(processes=workers) as pool:
-        results = list(pool.imap_unordered(_worker_speed_of_sound_candidate, worker_args))
-    return results
+    if use_process_pool:
+        ctx = get_context('spawn')
+        with ctx.Pool(processes=workers) as pool:
+            return list(pool.imap_unordered(_worker_speed_of_sound_candidate, worker_args))
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(executor.map(_worker_speed_of_sound_candidate, worker_args))
 
 # =============================================================================
 # 1. 3D PHYSICS ENGINE
@@ -406,6 +411,9 @@ def _worker_landscape_3d(args):
 
 def generate_3d_landscape_volumetric(context):
     cfg = context[-1]
+    # The low/high-frequency search branches can invoke grid scans concurrently.
+    # Split CPU capacity between them so two full-grid pools cannot oversubscribe.
+    grid_workers = max(1, cpu_count() // 2)
     res = cfg['grid_res_mm']
     x_vals = np.arange(cfg['x_bounds'][0], cfg['x_bounds'][1] + res, res)
     y_vals = np.arange(cfg['y_bounds'][0], cfg['y_bounds'][1] + res, res)
@@ -420,8 +428,7 @@ def generate_3d_landscape_volumetric(context):
     
     start_time = time.time()
     
-    with get_context('spawn').Pool(cpu_count()) as pool:
-        cursor = pool.imap(_worker_landscape_3d, pixels, chunksize=200)
+    def consume_results(cursor):
         for i, val in enumerate(cursor):
             r_idx, c_idx, d_idx = np.unravel_index(i, X_mesh.shape)
             grid[r_idx, c_idx, d_idx] = val
@@ -436,6 +443,13 @@ def generate_3d_landscape_volumetric(context):
                 pct = (i + 1) / total_pixels * 100
                 sys.stdout.write(f"\r      Rendering... {pct:.1f}% | Speed: {pts_per_sec:.0f} pts/s | ETA: {eta_str}      ")
                 sys.stdout.flush()
+
+    if cfg.get('use_process_pool', True):
+        with get_context('spawn').Pool(grid_workers) as pool:
+            consume_results(pool.imap(_worker_landscape_3d, pixels, chunksize=200))
+    else:
+        with ThreadPoolExecutor(max_workers=grid_workers) as executor:
+            consume_results(executor.map(_worker_landscape_3d, pixels))
                 
     sys.stdout.write("\r      Rendering Complete.                                                         \n")
     return x_vals, y_vals, z_vals, grid
@@ -621,6 +635,7 @@ def run_origin_search(
     enable_full_grid_scan: bool = False,
     kr_offset: float = 2.0,
     optimize_speed_of_sound: bool = True,
+    use_process_pool: bool = True,
     return_state: bool = False
 ):
     stage_start_time = time.time()
@@ -646,6 +661,7 @@ def run_origin_search(
         'target_n_max_origins': target_n_max_origins,
         'manual_order_table': manual_order_table if manual_order_table is not None else {},
         'kr_offset': kr_offset,
+        'use_process_pool': use_process_pool,
     }
     
     # 1. ALWAYS load the input data to ensure geometry and frequencies are available for plotting later
@@ -703,7 +719,8 @@ def run_origin_search(
             r_arr,
             th_arr,
             ph_arr,
-            cfg
+            cfg,
+            use_process_pool=use_process_pool
         )
         candidate_scores = score_speed_of_sound_candidates(coarse_results)
         best_candidate = min(candidate_scores, key=lambda item: item['score'])

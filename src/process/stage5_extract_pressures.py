@@ -331,7 +331,7 @@ def run_cta2034_extraction(
     zero_theta=None, zero_phi=None, offset_xyz=None, c_sound=None, save_to_disk=True,
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None, 
     obs_mode=None, mic_cal_fade_octaves=None, use_optimized_origins=True,
-    subtract_tof=None, frd_db_offset=None
+    subtract_tof=None, frd_db_offset=None, use_process_pool=True
 ):
     start_time = time.time()
 
@@ -383,7 +383,8 @@ def run_cta2034_extraction(
         she_input=coeff_path,
         obs_mode=obs_mode_val,
         c_sound=c_sound,
-        use_optimized_origins=use_optimized_origins
+        use_optimized_origins=use_optimized_origins,
+        use_process_pool=use_process_pool
     )
     
     freqs = result_raw["freqs"]
@@ -464,7 +465,8 @@ def run_sweep_extraction(
     zero_phi=None, dist_mic=None, obs_mode=None, offset_xyz=None, subtract_tof=None,
     frd_prefix=None, c_sound=None, save_to_disk=True, generate_ir_files=None,
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None,
-    mic_cal_fade_octaves=None, use_optimized_origins=True, frd_db_offset=None
+    mic_cal_fade_octaves=None, use_optimized_origins=True, frd_db_offset=None,
+    use_process_pool=True
 ):
     start_time = time.time()
 
@@ -586,7 +588,8 @@ def run_sweep_extraction(
         she_input=coeff_path,
         obs_mode=obs_mode,
         c_sound=c_sound,
-        use_optimized_origins=use_optimized_origins
+        use_optimized_origins=use_optimized_origins,
+        use_process_pool=use_process_pool
     )
     
     freqs = result_raw["freqs"]

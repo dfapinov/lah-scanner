@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.14] - 2026-06-20
+Changed: GUI processing stages now run through one serialized job coordinator. Stage settings are captured on the Tk main thread, workers receive plain Python data, and completion/error handling returns through a main-thread queue while each stage retains its existing internal multi-core parallelism.
+GUI runs create plots from returned results on the main thread, preventing delayed Tk image cleanup errors such as `RuntimeError: main thread is not in main loop` when moving between stages.
+The executable `hals_post.py` is now a Tk-free launcher, with the GUI implementation isolated in `hals_post_ui_core.py`. Spawned multiprocessing workers can therefore re-import the launcher without importing Tk/TkAgg, allowing GUI stages to retain full process-pool multi-core performance. Cyclic garbage collection is also deferred during GUI compute jobs and performed by the Tk main thread to prevent `Tcl_AsyncDelete: async handler deleted by the wrong thread` when rerunning stages.
+
+
 ## [2.2.13] - 2026-06-19
 Fixed: Stage 3 GUI runs now clamp OpenBLAS/MKL/OMP thread counts before scientific libraries are imported and cap the Stage 3 thread-pool worker count, preserving multi-core solving while avoiding native math oversubscription and `init_gesdd failed init` errors.
 
