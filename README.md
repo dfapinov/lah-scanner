@@ -87,7 +87,7 @@ Evaluates the 3D sound field at your chosen coordinates (e.g., 1m on-axis, arc s
    
 4. Launch the GUI:
    ```bash
-   python src/hals_gui.py
+   python src/hals_post.py
    ```
 
 ---
