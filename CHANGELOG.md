@@ -1,5 +1,8 @@
 # Changelog
 
+## [2.2.17] 2026-07-05
+Fixed: FDW Viewer frequency/window-duration labels are no longer pinned to a specific dB level; they now stay near the middle of the magnitude plot's Y axis while preserving their alternating up/down alignment.
+
 ## [2.2.16] 2026-07-05
 Changed: Stage 3 upper frequency default restored to 20 kHz, with upper-range guidance visible in the main settings while the RFT-seeded start frequency and RFT range note remain advanced.
 Changed: Stage 3 now produces a single recommended Order N: the roll-off knee when it exceeds 20 dB Int/Ext ratio, otherwise the highest Order N above 20 dB, with a fallback to the best available ratio when none exceeds the rule-of-thumb threshold.

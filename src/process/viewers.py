@@ -69,12 +69,16 @@ class FDWView:
             self.ax1.legend(loc="upper right", fontsize=9)
         else:
             self.ax1.semilogx(freqs, mag_db_raw, 'k', lw=2, zorder=10, label="FDW Raw")
+
+        mag_y_min, mag_y_max = self.ax1.get_ylim()
+        mag_y_mid = mag_y_min + ((mag_y_max - mag_y_min) * 0.5)
+        window_label_step = (mag_y_max - mag_y_min) * 0.045
         
         f_trans = m['f_trans']
         f_anchor = m.get('f_lf_anchor', 200.0)
         
         self.ax1.axvspan(f_trans, fs/2, color='#E0F7FA', alpha=0.5)
-        self.ax1.text(np.sqrt(f_trans*(fs/2)), -35, f"Fixed Window\n({fdw_rft_ms} ms)", 
+        self.ax1.text(np.sqrt(f_trans*(fs/2)), mag_y_mid, f"Fixed Window\n({fdw_rft_ms} ms)", 
                      color='#006064', fontsize=9, fontweight='bold', va='center', ha='center', 
                      bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'), zorder=20)
         
@@ -118,8 +122,9 @@ class FDWView:
             self.ax1.axvline(fc, color=line_color, ls='-', alpha=0.8, linewidth=1.2)
             
             t_win_ms = m['t_windows'][i] * 1000
-            label_y = -35 + (valid_band_idx % 2) * 4
-            self.ax1.text(fc, label_y, f"{fc:.0f}Hz\n{t_win_ms:.1f}ms", ha='center', fontsize=8, bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'), zorder=20)
+            label_y = mag_y_mid + (((valid_band_idx % 2) * 2) - 1) * window_label_step
+            label_va = 'top' if valid_band_idx % 2 == 0 else 'bottom'
+            self.ax1.text(fc, label_y, f"{fc:.0f}Hz\n{t_win_ms:.1f}ms", ha='center', va=label_va, fontsize=8, bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'), zorder=20)
             
             if len(t_ms) > 0:
                 win_len_ms = t_win_ms
