@@ -27,7 +27,7 @@ The entire pipeline can now be operated via a user-friendly Graphical User Inter
 To launch the GUI, run:
 
 ```bash
-python src/hals_gui.py
+python src/hals_post.py
 ```
 ![Measurment Grid Illustration](images/hals_gui_image.png)
 The GUI streamlines project management and grid generation as well as all processing steps to go from a directory of impulse responses to a full acoustic reconstruction while providing real-time execution tracking and graphical plots. The final stage allows detailed control over the export of frequency response and impulse response data from the reconstruction.
@@ -87,7 +87,7 @@ Evaluates the 3D sound field at your chosen coordinates (e.g., 1m on-axis, arc s
    
 4. Launch the GUI:
    ```bash
-   python src/hals_gui.py
+   python src/hals_post.py
    ```
 
 ---
