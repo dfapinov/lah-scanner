@@ -21,7 +21,7 @@ import numpy as np
 import schema
 from utils import spherical_to_cartesian, cartesian_to_spherical, apply_mic_calibration, write_wav, load_she_h5
 
-from extract_pressures_core import evaluate_she_field
+from extract_pressures_core import IR_CAPTURE_PADDING_SAMPLES, evaluate_she_field
 from complex_to_ir_core import complex_to_ir
 
 # -------------------------------------------------
@@ -331,7 +331,8 @@ def run_cta2034_extraction(
     zero_theta=None, zero_phi=None, offset_xyz=None, c_sound=None, save_to_disk=True,
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None, 
     obs_mode=None, mic_cal_fade_octaves=None, use_optimized_origins=True,
-    subtract_tof=None, frd_db_offset=None, use_process_pool=True
+    subtract_tof=None, frd_db_offset=None, ir_capture_padding_samples=None,
+    use_process_pool=True
 ):
     start_time = time.time()
 
@@ -343,6 +344,11 @@ def run_cta2034_extraction(
     zero_phi = zero_phi if zero_phi is not None else config_process.ZERO_PHI_DEG
     offset_xyz = offset_xyz if offset_xyz is not None else (config_process.OFFSET_MIC_X, config_process.OFFSET_MIC_Y, config_process.OFFSET_MIC_Z)
     c_sound = _resolve_speed_of_sound(c_sound, coeff_path, config_process.SPEED_OF_SOUND)
+    ir_capture_padding_samples = (
+        IR_CAPTURE_PADDING_SAMPLES
+        if ir_capture_padding_samples is None
+        else int(ir_capture_padding_samples)
+    )
     
     print("\n" + "="*50)
     print(" MODE: CTA-2034-A (SPINORAMA)")
@@ -384,6 +390,7 @@ def run_cta2034_extraction(
         obs_mode=obs_mode_val,
         c_sound=c_sound,
         use_optimized_origins=use_optimized_origins,
+        ir_capture_padding_samples=ir_capture_padding_samples,
         use_process_pool=use_process_pool
     )
     
@@ -466,7 +473,7 @@ def run_sweep_extraction(
     frd_prefix=None, c_sound=None, save_to_disk=True, generate_ir_files=None,
     apply_mic_cal=None, mic_cal_file=None, mic_cal_mode=None,
     mic_cal_fade_octaves=None, use_optimized_origins=True, frd_db_offset=None,
-    use_process_pool=True
+    ir_capture_padding_samples=None, use_process_pool=True
 ):
     start_time = time.time()
 
@@ -487,6 +494,11 @@ def run_sweep_extraction(
     frd_prefix = frd_prefix if frd_prefix is not None else config_process.FRD_PREFIX
     c_sound = _resolve_speed_of_sound(c_sound, coeff_path, config_process.SPEED_OF_SOUND)
     gen_ir = generate_ir_files if generate_ir_files is not None else getattr(config_process, 'GENERATE_IR_FILES', False)
+    ir_capture_padding_samples = (
+        IR_CAPTURE_PADDING_SAMPLES
+        if ir_capture_padding_samples is None
+        else int(ir_capture_padding_samples)
+    )
 
     output_dir = output_dir / frd_prefix
     complex_dir = output_dir / "complex"
@@ -589,6 +601,7 @@ def run_sweep_extraction(
         obs_mode=obs_mode,
         c_sound=c_sound,
         use_optimized_origins=use_optimized_origins,
+        ir_capture_padding_samples=ir_capture_padding_samples,
         use_process_pool=use_process_pool
     )
     

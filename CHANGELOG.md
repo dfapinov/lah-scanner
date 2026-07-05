@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.16] 2026-07-05
+Changed: Stage 3 upper frequency default restored to 20 kHz, with upper-range guidance visible in the main settings while the RFT-seeded start frequency and RFT range note remain advanced.
+Changed: Stage 3 now produces a single recommended Order N: the roll-off knee when it exceeds 20 dB Int/Ext ratio, otherwise the highest Order N above 20 dB, with a fallback to the best available ratio when none exceeds the rule-of-thumb threshold.
+
+## [2.2.15] - 2026-06-26
+Changed: Stage 5 artificial IR padding phase correction now subtracts 50 capture padding samples instead of 5, exposed as `IR_CAPTURE_PADDING_SAMPLES` near the top of `extract_pressures_core.py` and as a guarded manual override in the Stage 5 advanced GUI settings.
+
 ## [2.2.14] - 2026-06-20
 Changed: GUI processing stages now run through one serialized job coordinator. Stage settings are captured on the Tk main thread, workers receive plain Python data, and completion/error handling returns through a main-thread queue while each stage retains its existing internal multi-core parallelism.
 GUI runs create plots from returned results on the main thread, preventing delayed Tk image cleanup errors such as `RuntimeError: main thread is not in main loop` when moving between stages.

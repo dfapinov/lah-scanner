@@ -33,6 +33,13 @@ from utils import (
 )
 
 # -------------------------------------------------
+# User Adjustable Settings
+# -------------------------------------------------
+# Number of leading padding samples added during IR capture/deconvolution.
+# Stage 5 subtracts this artificial delay from exported FRD/IR phase.
+IR_CAPTURE_PADDING_SAMPLES = 50
+
+# -------------------------------------------------
 # Worker Function (Updated for Dynamic Translation)
 # -------------------------------------------------
 
@@ -105,6 +112,7 @@ def evaluate_she_field(
     c_sound: float = 343.0,
     use_optimized_origins: bool = True,
     corr_ir_pad_phase: bool = True,
+    ir_capture_padding_samples: int | None = None,
     use_process_pool: bool = True
 ) -> Dict[str, np.ndarray]:
     
@@ -171,14 +179,16 @@ def evaluate_she_field(
     # -------------------------------------------------
     # Artificial Padding Phase Correction
     # -------------------------------------------------
-    # audio.py splits the linear IR from the full Farina IR at the mid-point 
-    # minus 5 samples (`split_idx = len(inv_data) - 5`) to avoid cutting off 
-    # the start of the IR. This introduces a 5-sample artificial delay into 
-    # the entire system. We mathematically remove this delay here by applying 
-    # a phase advance, ensuring all extracted responses (FRD and WAV) retain 
-    # only their true physical time-of-flight.
+    # The capture process splits the linear IR from the full Farina IR with
+    # leading sample padding to avoid cutting off pre-ringing at the start of
+    # the IR. This introduces an artificial delay into the entire system. We
+    # mathematically remove that delay here by applying a phase advance,
+    # ensuring all extracted responses (FRD and WAV) retain only their true
+    # physical time-of-flight.
     if corr_ir_pad_phase:
-        pad_samples = 5
+        pad_samples = IR_CAPTURE_PADDING_SAMPLES if ir_capture_padding_samples is None else int(ir_capture_padding_samples)
+        if pad_samples < 0:
+            raise ValueError("IR capture padding samples must be zero or greater.")
         if fs_val is not None:
             fs_target = float(fs_val)
         else:

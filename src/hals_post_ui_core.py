@@ -57,7 +57,9 @@ GUI_TOOLTIPS = {
     'manual_list_mode': "Uses a custom list of specific coordinates rather than standard sweeps.",
     'obs_mode': "Internal (extracts direct sound from speaker), External (extracts room reflections), Full (recombines both).",
     'mic_cal_fade_octaves': "Octave span over which the microphone calibration smoothly fades to 0dB at the extremes of the measurement.",
-    'use_optimized_origins_stage5': "Uses the frequency-dependent acoustic origins calculated in Stage 2 to extract the most accurate phase."
+    'use_optimized_origins_stage5': "Uses the frequency-dependent acoustic origins calculated in Stage 2 to extract the most accurate phase.",
+    'manual_ir_capture_padding': "Enable manual editing of the IR capture padding correction. This is normally fixed to the value used by the Harmonic Drive capture suite and is exposed only for IR files created by another source.",
+    'ir_capture_padding_samples': "Number of capture padding samples to subtract from Stage 5 phase. Leave manual editing off for Harmonic Drive capture suite IRs; change only when processing IR files from another source."
 }
 
 SPEED_OF_SOUND_TOOLTIP = "\n".join([
@@ -73,6 +75,17 @@ SPEED_OF_SOUND_TOOLTIP = "\n".join([
     "346 m/s  approx 23 C",
     "347 m/s  approx 25 C",
     "348 m/s  approx 26.5 C",
+])
+
+STAGE3_UPPER_RANGE_NOTE = "\n".join([
+    "Defaulting to 20 kHz tests the full audible band, but sparse measurement sets may not support stable sound field separation that high.",
+    "",
+    "For example, a 500-point measurement set can be too sparse at 20 kHz, forcing the supported Order N down to around 4 or 5.",
+    "",
+    "If the driver is only useful to a lower frequency, such as a woofer rolling off before 10 kHz, set the upper test range to 10 kHz.",
+    "Within that reduced range, the same data may support a more stable Order N around 6 or 7.",
+    "",
+    "Expect spatial aliasing/noise above the tested and supported range.",
 ])
 
 
@@ -2175,6 +2188,20 @@ class SpkrScannerApp(tk.Tk):
         
         self.stage3_vars = {}
 
+        # --- Main Settings ---
+        main_settings_frame = ttk.LabelFrame(main_container, text="Main Settings", padding="10")
+        main_settings_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
+
+        self.stage3_vars['freq_end_hz'] = self._add_form_entry(main_settings_frame, "End Frequency (Hz):", "20000.0", "Upper boundary of the Stage 3 order test.")
+        stage3_upper_range_note = ttk.Label(
+            main_settings_frame,
+            text=STAGE3_UPPER_RANGE_NOTE,
+            font=("Arial", 9, "italic"),
+            justify=tk.LEFT,
+            wraplength=680
+        )
+        stage3_upper_range_note.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(2, 8))
+
         # --- Advanced Settings ---
         self.btn_stage3_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage3_advanced)
         self.btn_stage3_advanced.pack(side=tk.TOP, pady=10)
@@ -2182,19 +2209,15 @@ class SpkrScannerApp(tk.Tk):
         self.stage3_adv_frame = ttk.LabelFrame(main_container, text="Advanced Settings", padding="10")
         
         self.stage3_vars['test_order_range'] = self._add_form_entry(self.stage3_adv_frame, "Test Order Range (min, max):", "2, 15", "Range of orders N to test.")
-        freq_frame = ttk.Frame(self.stage3_adv_frame)
-        freq_frame.pack(side=tk.TOP, fill=tk.X)
-        f_start_frame = ttk.Frame(freq_frame); f_start_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        f_end_frame = ttk.Frame(freq_frame); f_end_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-        self.stage3_vars['freq_start_hz'] = self._add_form_entry(f_start_frame, "Start Frequency (Hz):", "10000.0", "Lower boundary of the Stage 3 order test.")
-        self.stage3_vars['freq_end_hz'] = self._add_form_entry(f_end_frame, "End Frequency (Hz):", "10000.0", "Upper boundary of the Stage 3 order test.")
-        stage3_range_note = ttk.Label(
+        self.stage3_vars['freq_start_hz'] = self._add_form_entry(self.stage3_adv_frame, "Start Frequency (Hz):", "10000.0", "Lower boundary of the Stage 3 order test. Normally auto-seeded from the Stage 1 RFT transition.")
+        stage3_rft_note = ttk.Label(
             self.stage3_adv_frame,
-            text="Note: The Stage 3 frequency range should be entirely within the reflection-free time/range.",
+            text="Note: The Stage 3 start frequency is normally auto-seeded from Stage 1 RFT metadata. The Stage 3 frequency range should be entirely within the reflection-free time/range.",
             font=("Arial", 9, "italic"),
-            justify=tk.LEFT
+            justify=tk.LEFT,
+            wraplength=680
         )
-        stage3_range_note.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(2, 8))
+        stage3_rft_note.pack(side=tk.TOP, anchor=tk.W, fill=tk.X, pady=(0, 8))
 
         # --- Button ---
         self.btn_stage3_run = ttk.Button(main_container, text="Run Stage 3", command=self._action_run_stage3)
@@ -2262,21 +2285,22 @@ class SpkrScannerApp(tk.Tk):
 
     def _finish_stage3_job(self, optimizer_result):
         self._show_stage3_choice_popup(optimizer_result)
-        print("Stage 3 completed successfully. Choose which suggested order to send to Stage 4.")
+        print("Stage 3 completed successfully. Review the recommended order before sending it to Stage 4.")
 
     def _show_stage3_choice_popup(self, optimizer_result):
         if isinstance(optimizer_result, tuple):
             target_n_max, noise_floor_start_db, noise_floor_max_db, max_lambda = optimizer_result
             options = {
                 "best_sfs": {
-                    "label": "Order N with best SFS and solve stability",
+                    "label": "Recommended Order N",
                     "n": target_n_max,
                     "st": noise_floor_start_db,
                     "mx": noise_floor_max_db,
                     "lam": max_lambda,
                     "ratio": None,
                     "err": None,
-                    "warning": ""
+                    "warning": "",
+                    "reason": "Legacy Stage 3 result."
                 }
             }
         else:
@@ -2287,31 +2311,44 @@ class SpkrScannerApp(tk.Tk):
             return
 
         top = tk.Toplevel(self)
-        top.title("Choose Stage 3 Order N")
+        top.title("Stage 3 Recommended Order N")
         top.geometry("780x680")
         top.transient(self)
         top.grab_set()
 
         frame = ttk.Frame(top, padding="12")
         frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="Select the order N result to use in Stage 4:", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(frame, text="Stage 3 recommended Order N for Stage 4:", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
 
         plot_fig = None
         step1 = optimizer_result.get("step1", {}) if isinstance(optimizer_result, dict) else {}
         plot_path = optimizer_result.get("plot_path", "") if isinstance(optimizer_result, dict) else ""
+        recommended_key = optimizer_result.get("recommended_key", "recommended") if isinstance(optimizer_result, dict) else "best_sfs"
+        if recommended_key not in options:
+            recommended_key = "recommended" if "recommended" in options else next(iter(options.keys()))
+        recommended = options[recommended_key]
+        recommendation_note = optimizer_result.get("recommendation_note", recommended.get("reason", "")) if isinstance(optimizer_result, dict) else recommended.get("reason", "")
+        sfs_rule_db = optimizer_result.get("sfs_ratio_rule_db", 20.0) if isinstance(optimizer_result, dict) else 20.0
         orders = step1.get("orders", [])
         ratios = step1.get("ratios", [])
         if len(orders) > 0 and len(ratios) > 0:
             plot_fig, ax_ratio = plt.subplots(figsize=(7.4, 3.2))
             ax_ratio.plot(orders, ratios, marker="o", linewidth=1.4, color="#4c78a8", label="Int/Ext ratio")
+            ax_ratio.axhline(
+                float(sfs_rule_db),
+                color="#59a14f",
+                linestyle="--",
+                linewidth=1.0,
+                alpha=0.8,
+                label=f"{sfs_rule_db:.0f} dB acceptable SFS rule of thumb",
+            )
             ax_ratio.set_xlabel("Order N")
             ax_ratio.set_ylabel("Int/Ext ratio (dB)")
             ax_ratio.set_xticks(orders)
             ax_ratio.grid(True, linestyle="--", alpha=0.35)
 
             marker_styles = {
-                "rolloff_knee": ("#e45756", "o", "Roll-off knee"),
-                "best_sfs": ("#b279a2", "s", "Best SFS"),
+                recommended_key: ("#e45756", "o", "Recommended"),
             }
             for key, (color, marker, label) in marker_styles.items():
                 opt = options.get(key)
@@ -2339,31 +2376,25 @@ class SpkrScannerApp(tk.Tk):
         if plot_path:
             ttk.Label(frame, text=f"Saved plot: {plot_path}", wraplength=720).pack(anchor=tk.W, pady=(0, 8))
 
-        default_choice = "rolloff_knee" if "rolloff_knee" in options else next(iter(options.keys()))
-        choice_var = tk.StringVar(value=default_choice)
-
-        for key in ["rolloff_knee", "best_sfs"]:
-            opt = options.get(key)
-            if not opt:
-                continue
-            ratio_text = "n/a" if opt.get("ratio") is None else f"{opt['ratio']:.2f} dB"
-            text = (
-                f"{opt.get('label', key)}\n"
-                f"N={opt['n']}, Int/Ext={ratio_text}"
-            )
-            if opt.get("warning"):
-                text += f"\nWarning: {opt['warning']}"
-            ttk.Radiobutton(frame, text=text, variable=choice_var, value=key).pack(anchor=tk.W, fill=tk.X, pady=6)
+        ratio_text = "n/a" if recommended.get("ratio") is None else f"{recommended['ratio']:.2f} dB"
+        result_text = (
+            f"{recommended.get('label', recommended_key)}: N={recommended['n']}, Int/Ext={ratio_text}\n"
+            f"{recommendation_note}\n\n"
+            f"Rule of thumb: an Int/Ext SFS ratio greater than {float(sfs_rule_db):.0f} dB has been found to produce acceptable results."
+        )
+        if recommended.get("warning"):
+            result_text += f"\n\nWarning: {recommended['warning']}"
+        ttk.Label(frame, text=result_text, wraplength=720, justify=tk.LEFT).pack(anchor=tk.W, fill=tk.X, pady=6)
 
         note = optimizer_result.get("warning", "") if isinstance(optimizer_result, dict) else ""
         if note:
-            ttk.Label(frame, text=note, foreground="orange", wraplength=560).pack(anchor=tk.W, pady=(8, 0))
+            ttk.Label(frame, text=note, foreground="orange", wraplength=720).pack(anchor=tk.W, pady=(8, 0))
 
         def send_choice():
-            opt = options[choice_var.get()]
+            opt = options[recommended_key]
             if 'target_n_max' in self.stage4_vars:
                 self.stage4_vars['target_n_max'].set(str(opt['n']))
-            print(f"Sent {opt.get('label', choice_var.get())} (N={opt['n']}) to Stage 4.")
+            print(f"Sent {opt.get('label', recommended_key)} (N={opt['n']}) to Stage 4.")
             close_popup()
 
         btn_frame = ttk.Frame(frame)
@@ -2799,7 +2830,35 @@ class SpkrScannerApp(tk.Tk):
         
         self.stage5_vars['obs_mode'] = self._add_combobox(self.stage5_adv_frame, "Observation Mode:", ["Internal", "External", "Full"], "Internal", GUI_TOOLTIPS.get('obs_mode'))
         self.stage5_vars['mic_cal_fade_octaves'] = self._add_form_entry(self.stage5_adv_frame, "Mic Cal Fade Octaves:", "1.0", GUI_TOOLTIPS.get('mic_cal_fade_octaves'))
-        self.stage5_vars['use_optimized_origins'] = self._add_checkbutton(self.stage5_adv_frame, "Use Optimized Origins", True, GUI_TOOLTIPS.get('use_optimized_origins_stage5'))
+        origins_frame = ttk.Frame(self.stage5_adv_frame)
+        origins_frame.pack(anchor=tk.W, fill=tk.X, pady=(5, 0))
+        self.stage5_vars['use_optimized_origins'] = self._add_checkbutton(
+            origins_frame,
+            "Use Optimized Origins",
+            True,
+            GUI_TOOLTIPS.get('use_optimized_origins_stage5')
+        )
+
+        try:
+            from extract_pressures_core import IR_CAPTURE_PADDING_SAMPLES
+            default_ir_padding = str(IR_CAPTURE_PADDING_SAMPLES)
+        except Exception:
+            default_ir_padding = "50"
+        ir_padding_frame = ttk.Frame(self.stage5_adv_frame)
+        ir_padding_frame.pack(anchor=tk.W, fill=tk.X, pady=(5, 0))
+        self.stage5_vars['manual_ir_capture_padding'] = self._add_checkbutton(
+            ir_padding_frame,
+            "Edit IR Capture Padding",
+            False,
+            GUI_TOOLTIPS.get('manual_ir_capture_padding')
+        )
+        self.stage5_vars['ir_capture_padding_samples'] = self._add_form_entry(
+            self.stage5_adv_frame,
+            "IR Capture Padding Samples:",
+            default_ir_padding,
+            GUI_TOOLTIPS.get('ir_capture_padding_samples'),
+            state_var=self.stage5_vars['manual_ir_capture_padding']
+        )
 
         self.btn_stage5_run = ttk.Button(main_container, text="Run Stage 5", command=self._action_run_stage5)
         self.btn_stage5_run.pack(side=tk.TOP, pady=20)
@@ -3013,6 +3072,12 @@ class SpkrScannerApp(tk.Tk):
                 raise ValueError("Manual Coordinate List mode is active, but the list is empty.")
 
             frd_offset_var = self.stage5_vars.get('frd_db_offset')
+            manual_ir_padding = self.stage5_vars['manual_ir_capture_padding'].get()
+            ir_padding_samples = None
+            if manual_ir_padding:
+                ir_padding_samples = int(self.stage5_vars['ir_capture_padding_samples'].get())
+                if ir_padding_samples < 0:
+                    raise ValueError("IR Capture Padding Samples must be zero or greater.")
             settings = {
                 'project_dir': proj_dir,
                 'coeff_path': coeff_path,
@@ -3026,6 +3091,7 @@ class SpkrScannerApp(tk.Tk):
                 'mic_cal_fade_octaves': float(self.stage5_vars['mic_cal_fade_octaves'].get()),
                 'use_optimized_origins': self.stage5_vars['use_optimized_origins'].get(),
                 'frd_db_offset': float(frd_offset_var.get()) if frd_offset_var is not None else 0.0,
+                'ir_capture_padding_samples': ir_padding_samples,
                 'manual_mode': manual_mode,
                 'manual_coords': manual_coords,
                 'cta_mode': self.stage5_vars['cta_mode'].get(),
@@ -3088,6 +3154,7 @@ class SpkrScannerApp(tk.Tk):
             'mic_cal_fade_octaves': settings['mic_cal_fade_octaves'],
             'use_optimized_origins': settings['use_optimized_origins'],
             'frd_db_offset': settings['frd_db_offset'],
+            'ir_capture_padding_samples': settings['ir_capture_padding_samples'],
             'use_process_pool': True,
         }
 

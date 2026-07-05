@@ -42,6 +42,7 @@ MANUAL_STEP2_ORDER = None
 FIXED_NOISE_FLOOR_START_DB = -30.0
 FIXED_NOISE_FLOOR_MAX_DB = -40.0
 FIXED_MAX_LAMBDA = 0.000001
+SFS_ACCEPTABLE_RATIO_DB = 20.0
 
 def find_rolloff_knee(orders, ratios):
     orders = np.asarray(orders, dtype=float)
@@ -132,8 +133,7 @@ def find_rolloff_knee(orders, ratios):
 
 def _stage3_recommendation_markers(options=None):
     marker_styles = {
-        "rolloff_knee": ("#e45756", "o", "Roll-off knee"),
-        "best_sfs": ("#b279a2", "s", "Best SFS"),
+        "recommended": ("#e45756", "o", "Recommended"),
     }
     markers = []
     if not options:
@@ -162,6 +162,14 @@ def save_stage3_order_sweep_plot(orders, ratios, residuals=None, options=None, k
         FigureCanvasAgg(fig)
         ax_ratio = fig.add_subplot(111)
         ax_ratio.plot(orders_arr, ratios_arr, marker="o", linewidth=1.5, color="#4c78a8", label="Int/Ext ratio")
+        ax_ratio.axhline(
+            SFS_ACCEPTABLE_RATIO_DB,
+            color="#59a14f",
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.8,
+            label="20 dB acceptable SFS rule of thumb",
+        )
         ax_ratio.set_xlabel("Order N")
         ax_ratio.set_ylabel("Int/Ext ratio (dB)")
         ax_ratio.grid(True, linestyle="--", alpha=0.35)
@@ -335,8 +343,8 @@ def run_open_branch_optimizer(
     rolloff_knee = find_rolloff_knee(n_vals, ratio_vals)
     if best_sfs_ratio <= 0:
         print("WARNING: No positive Int/Ext ratio was found. Sound field separation may not be ideal; re-consider measurement settings.")
-    elif best_sfs_ratio < 15.0:
-        print("WARNING: No Order N reached 15 dB Int/Ext ratio. Using the highest available ratio; sound field separation may not be ideal. Re-consider measurement settings.")
+    elif best_sfs_ratio <= SFS_ACCEPTABLE_RATIO_DB:
+        print(f"WARNING: No Order N exceeded {SFS_ACCEPTABLE_RATIO_DB:.0f} dB Int/Ext ratio. Sound field separation may not be ideal. Re-consider measurement settings.")
 
     print("-" * 65)
     print(f"=> Order N with best SFS and solve stability: N={best_sfs_N} (Ratio: {best_sfs_ratio:.2f} dB)")
@@ -345,25 +353,10 @@ def run_open_branch_optimizer(
     else:
         print("=> Order N at roll-off start: not detected")
 
-    print("\n" + "="*65)
-    print(" FINAL ORDER N OPTIONS")
-    print("="*65)
-    print(f"Order N with best SFS and solve stability: N={best_sfs_N}, Ratio={best_sfs_ratio:.2f} dB, Resid={best_sfs_err:.2f}%")
-    if rolloff_knee:
-        print(f"Order N at roll-off start: N={rolloff_knee['n']}, Ratio={rolloff_knee['ratio']:.2f} dB, Resid={err_vals[n_vals.index(rolloff_knee['n'])]:.2f}%")
-    print("="*65)
-
-    elapsed = time.time() - start_time
-    print(f"\nStage 3 processing completed in {elapsed:.2f} seconds.")
-
-    warning = ""
-    if best_sfs_ratio < 15.0:
-        warning = "No Order N reached 15 dB Int/Ext ratio. Sound field separation may not be ideal; re-consider measurement settings."
-
     def step1_option(label, order_n, ratio, err):
         option_warning = ""
-        if ratio < 15.0:
-            option_warning = "Below 15 dB Int/Ext ratio; sound field separation may not be ideal."
+        if ratio <= SFS_ACCEPTABLE_RATIO_DB:
+            option_warning = f"Below the >{SFS_ACCEPTABLE_RATIO_DB:.0f} dB Int/Ext rule of thumb; sound field separation may not be ideal."
         return {
             'label': label,
             'n': order_n,
@@ -375,19 +368,59 @@ def run_open_branch_optimizer(
             'warning': option_warning,
         }
 
-    options = {
-        'best_sfs': step1_option("Order N with best SFS and solve stability", best_sfs_N, best_sfs_ratio, best_sfs_err),
-    }
-    if rolloff_knee:
-        options['rolloff_knee'] = step1_option(
-            "Order N at roll-off start",
-            rolloff_knee['n'],
-            rolloff_knee['ratio'],
-            err_vals[n_vals.index(rolloff_knee['n'])]
+    above_threshold_indices = [
+        i for i, ratio in enumerate(ratio_vals)
+        if np.isfinite(ratio) and ratio > SFS_ACCEPTABLE_RATIO_DB
+    ]
+    if rolloff_knee and rolloff_knee['ratio'] > SFS_ACCEPTABLE_RATIO_DB:
+        recommended_N = rolloff_knee['n']
+        recommended_idx = n_vals.index(recommended_N)
+        recommendation_reason = (
+            f"Selected the roll-off knee because it is above the >{SFS_ACCEPTABLE_RATIO_DB:.0f} dB "
+            "Int/Ext rule of thumb and marks the start of the post-peak decline."
         )
-        options['rolloff_knee']['warning'] = "Detected from the post-peak Int/Ext curve knee; inspect the saved plot before treating it as a hard limit."
-        options['rolloff_knee']['knee_distance'] = rolloff_knee['distance']
-        options['rolloff_knee']['method'] = rolloff_knee['method']
+    elif above_threshold_indices:
+        recommended_idx = max(above_threshold_indices, key=lambda i: n_vals[i])
+        recommended_N = n_vals[recommended_idx]
+        recommendation_reason = (
+            f"Selected the highest Order N that still exceeds the >{SFS_ACCEPTABLE_RATIO_DB:.0f} dB "
+            "Int/Ext rule of thumb because no qualifying roll-off knee was detected."
+        )
+    else:
+        recommended_idx = best_sfs_idx
+        recommended_N = best_sfs_N
+        recommendation_reason = (
+            f"No Order N exceeded the >{SFS_ACCEPTABLE_RATIO_DB:.0f} dB Int/Ext rule of thumb, "
+            "so the highest Int/Ext ratio was selected as the fallback."
+        )
+
+    recommended = step1_option(
+        "Recommended Order N",
+        recommended_N,
+        ratio_vals[recommended_idx],
+        err_vals[recommended_idx],
+    )
+    recommended['reason'] = recommendation_reason
+    if rolloff_knee and recommended_N == rolloff_knee['n']:
+        recommended['knee_distance'] = rolloff_knee['distance']
+        recommended['method'] = rolloff_knee['method']
+
+    options = {'recommended': recommended}
+
+    print("\n" + "="*65)
+    print(" FINAL ORDER N RECOMMENDATION")
+    print("="*65)
+    print(f"Recommended Order N: N={recommended_N}, Ratio={recommended['ratio']:.2f} dB, Resid={recommended['err']:.2f}%")
+    print(recommendation_reason)
+    print(f"Rule of thumb: Int/Ext SFS ratio greater than {SFS_ACCEPTABLE_RATIO_DB:.0f} dB has been found to produce acceptable results.")
+    print("="*65)
+
+    elapsed = time.time() - start_time
+    print(f"\nStage 3 processing completed in {elapsed:.2f} seconds.")
+
+    warning = ""
+    if best_sfs_ratio <= SFS_ACCEPTABLE_RATIO_DB:
+        warning = f"No Order N exceeded {SFS_ACCEPTABLE_RATIO_DB:.0f} dB Int/Ext ratio. Sound field separation may not be ideal; re-consider measurement settings."
 
     if save_plot and plot_save_path is None:
         stem = os.path.splitext(input_filename_opti)[0]
@@ -407,6 +440,9 @@ def run_open_branch_optimizer(
         'options': {
             **options,
         },
+        'recommended_key': 'recommended',
+        'recommendation_note': recommendation_reason,
+        'sfs_ratio_rule_db': SFS_ACCEPTABLE_RATIO_DB,
         'step1': {
             'orders': n_vals,
             'ratios': ratio_vals,
