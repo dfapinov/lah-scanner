@@ -54,9 +54,34 @@ class FDWView:
         self.ax3 = self.fig.add_subplot(self.gs[2], sharex=self.ax1)
         self.fig.subplots_adjust(bottom=0.08, right=0.88, left=0.08, top=0.95)
 
+    @staticmethod
+    def _first_non_dc_freq(freqs):
+        positive = np.asarray(freqs)[np.asarray(freqs) > 0]
+        return float(positive[0]) if positive.size else 1.0
+
+    @staticmethod
+    def _audio_ticks(f_min, f_max):
+        base_ticks = (10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000)
+        return [float(tick) for tick in base_ticks if f_min <= tick <= f_max]
+
+    @staticmethod
+    def _format_audio_tick(freq_hz):
+        if freq_hz >= 1000:
+            value = freq_hz / 1000.0
+            return f"{value:g} kHz"
+        return f"{freq_hz:g} Hz"
+
+    def _set_frequency_axis(self, ax, f_min, f_max):
+        ax.set_xlim(f_min, f_max)
+        ticks = self._audio_ticks(f_min, f_max)
+        if ticks:
+            ax.xaxis.set_major_locator(ticker.FixedLocator(ticks))
+            ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: self._format_audio_tick(x)))
+
     @silence_log_warnings
-    def update_view(self, fname, index, freqs, H_raw, H_smooth, meta_dict, wav_data, fs, fdw_f_min, fdw_rft_ms):
+    def update_view(self, fname, index, freqs, H_raw, H_smooth, meta_dict, wav_data, fs, fdw_rft_ms):
         m = meta_dict
+        plot_f_min = self._first_non_dc_freq(freqs)
         
         self.ax1.clear()
             
@@ -83,7 +108,7 @@ class FDWView:
                      bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'), zorder=20)
         
         cmap = plt.get_cmap('YlOrRd')
-        num_octaves = np.log2(f_trans / fdw_f_min) if f_trans > fdw_f_min else 1
+        num_octaves = np.log2(f_trans / plot_f_min) if f_trans > plot_f_min else 1
         
         self.ax2.clear()
         
@@ -98,13 +123,13 @@ class FDWView:
             self.ax2.text(0.5, 0.5, "Error loading wav", ha='center', va='center')
             t_ms, local_max, peak_time_ms = np.array([]), 0, 0
 
-        valid_indices = [i for i, fc in enumerate(m['f_centers']) if fdw_f_min <= fc <= f_trans]
+        valid_indices = [i for i, fc in enumerate(m['f_centers']) if plot_f_min <= fc <= f_trans]
         valid_centers = m['f_centers'][valid_indices]
         
         boundaries = [f_trans]
         if len(valid_centers) > 0 and abs(valid_centers[0] - f_trans) > 1.0: boundaries.append(valid_centers[0])
         if len(valid_centers) > 0: boundaries.extend(valid_centers[1:])
-        boundaries.append(fdw_f_min)
+        boundaries.append(plot_f_min)
         
         for k in range(len(boundaries) - 1):
             high_bound, low_bound = boundaries[k], boundaries[k+1]
@@ -115,7 +140,7 @@ class FDWView:
 
         valid_band_idx = 0 
         for i, fc in enumerate(m['f_centers']):
-            if fc < fdw_f_min or fc > f_trans: continue
+            if fc < plot_f_min or fc > f_trans: continue
             
             norm_pos = np.log2(f_trans / fc) / num_octaves
             line_color = cmap(0.1 + (0.5 * np.clip(norm_pos, 0, 1)))
@@ -161,8 +186,8 @@ class FDWView:
         sort_idx = np.argsort(f_raw)
         f_plot, a_plot = f_raw[sort_idx], a_raw[sort_idx]
         
-        if f_plot[0] > fdw_f_min:
-            f_plot = np.insert(f_plot, 0, fdw_f_min)
+        if f_plot[0] > plot_f_min:
+            f_plot = np.insert(f_plot, 0, plot_f_min)
             a_plot = np.insert(a_plot, 0, a_plot[0]) 
             
         self.ax3.semilogx(f_plot, a_plot, 'b-', lw=3)
@@ -175,24 +200,22 @@ class FDWView:
         self.ax3.text(f_anchor, a_min + (y_range * 0.05), f"Alpha LF: {f_anchor:.0f} Hz ", color='green', fontsize=8, ha='right', va='bottom')
 
         self.ax3.set_ylabel("Alpha")
-        self.ax3.set_xlim(fdw_f_min, fs/2)
+        self._set_frequency_axis(self.ax3, plot_f_min, fs/2)
         self.ax3.grid(True, which='both', alpha=0.3)
-        self.ax3.xaxis.set_major_formatter(ticker.ScalarFormatter())
 
         self.ax1.set_title(f"File [{index}]: {fname}\nFDW Magnitude")
         self.ax1.set_ylabel("Magnitude (dB)")
-        self.ax1.set_xlim(fdw_f_min, fs/2)
+        self._set_frequency_axis(self.ax1, plot_f_min, fs/2)
         self.ax1.grid(True, which='both', alpha=0.3)
-        self.ax1.xaxis.set_major_formatter(ticker.ScalarFormatter())
         
         self.fig.canvas.draw_idle()
 
 class FDWViewer:
     """Standalone Tkinter wrapper for FDWView."""
-    def __init__(self, freqs, data_dict, meta_dict, fs, ir_dir, crop_samples, data_dict_smooth=None, fdw_f_min=20.0, fdw_rft_ms=5.0):
+    def __init__(self, freqs, data_dict, meta_dict, fs, ir_dir, crop_samples, data_dict_smooth=None, fdw_rft_ms=5.0):
         self.freqs, self.data_dict, self.data_dict_smooth = freqs, data_dict, data_dict_smooth
         self.meta_dict, self.fs, self.ir_dir = meta_dict, fs, ir_dir
-        self.crop_samples, self.fdw_f_min, self.fdw_rft_ms = crop_samples, fdw_f_min, fdw_rft_ms
+        self.crop_samples, self.fdw_rft_ms = crop_samples, fdw_rft_ms
         self.filenames = sorted(list(data_dict.keys()), key=natural_keys)
         self.index = 0
         
@@ -239,7 +262,7 @@ class FDWViewer:
         except Exception:
             wav_data = None
             
-        self.view.update_view(fname, self.index, self.freqs, H_raw, H_smooth, m, wav_data, self.fs, self.fdw_f_min, self.fdw_rft_ms)
+        self.view.update_view(fname, self.index, self.freqs, H_raw, H_smooth, m, wav_data, self.fs, self.fdw_rft_ms)
 
     def next_plot(self): self.index = (self.index + 1) % len(self.filenames); self.refresh_plot()
     def prev_plot(self): self.index = (self.index - 1) % len(self.filenames); self.refresh_plot()

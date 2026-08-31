@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.18] - 2026-08-31
+Changed: Project baffle geometry now supports either two or three waypoints. Two opposite corners define a vertical baffle, while three waypoints allow sloped baffle planes.
+
+Added: The Project Metadata tab now displays the Stage 5 3D visualization in its right-hand pane.
+
+Added: Stage 1 now includes a Reflection Free Time calculator and an option to apply the calculated RFT directly to Stage 1.
+
+Changed: Stage 1 show-plot setting removed - Stage 1 FDW viewer now opens automatically after every successful GUI run.
+
+Changed: Stage 1 minimum-frequency visual only setting remvoed. FDW viewer frequency axes use the full available processed range with.
+
+Changed: Stage 1 smoothing controls are now grouped under a dedicated Debug / Inspection section in Advanced Settings.
+
+Added: A comprehensive Stage 1 GUI guide covering setup, FDW, reflection-free time, complex smoothing, outputs, and result inspection.
+
+
 ## [2.2.17] 2026-07-05
 Fixed: FDW Viewer frequency/window-duration labels are no longer pinned to a specific dB level; they now stay near the middle of the magnitude plot's Y axis while preserving their alternating up/down alignment.
 

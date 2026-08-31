@@ -30,7 +30,7 @@ PEAK_DETECT_THRESHOLD_DB = -12.0 # Peak detection finds loudest peak, then searc
 
 # --- Visualization ---
 PLOT_OUTPUT       = True            # If True, launches the interactive data viewer after processing.
-FDW_F_MIN         = 20.0            # Minimum frequency (Hz) for the X axis in the plot view of the FDW analysis. Visual only.
+FDW_F_MIN         = 20.0            # Minimum frequency (Hz) used when sizing the longest FDW window.
 
 
 """ Stage 2 - Acoustic Origin Search """

@@ -34,7 +34,7 @@ Input Arguments:
     save_to_disk (bool): Save results to .npz file.
     fdw_alpha_hf (float): High-frequency alpha taper (0.0 to 1.0).
     fdw_alpha_lf (float): Low-frequency alpha taper.
-    fdw_f_min (float): Minimum frequency for plotting limits.
+    fdw_f_min (float): Minimum frequency used when sizing the longest FDW window.
     fdw_windows_per_oct (int): Windows per octave to generate.
     peak_detect_threshold_db (float): Peak detection threshold.
     enable_auto_gain (bool): Auto-normalize batch to a target peak.
@@ -315,7 +315,7 @@ def fdwsmooth(
     if show_plot: 
         print("Opening Viewer...")
         from viewers import FDWViewer
-        FDWViewer(freqs, plot_data, meta, fs_common, ir_dir, crop_samples, data_dict_smooth=plot_smooth, fdw_f_min=fdw_f_min, fdw_rft_ms=fdw_rft_ms)
+        FDWViewer(freqs, plot_data, meta, fs_common, ir_dir, crop_samples, data_dict_smooth=plot_smooth, fdw_rft_ms=fdw_rft_ms)
 
     return freqs, results_raw, results_smooth, meta
 

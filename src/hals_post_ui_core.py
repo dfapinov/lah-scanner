@@ -14,6 +14,11 @@ os.environ['NUMEXPR_NUM_THREADS'] = '1'
 import sys
 import traceback
 import json
+import matplotlib
+
+# Every Matplotlib figure in this application is embedded in Tkinter. Select
+# Tk before importing pyplot so Matplotlib cannot auto-select and initialize Qt.
+matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import threading
@@ -24,6 +29,7 @@ import gc
 # Append script directories to sys.path so we can import them as libraries
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(current_dir, 'process'))
+sys.path.append(os.path.join(current_dir, 'misc'))
 
 try:
     from stage1_fdwsmooth import fdwsmooth
@@ -293,6 +299,10 @@ class SpkrScannerApp(tk.Tk):
         if hasattr(self, 'splash') and self.splash:
             self.splash.destroy()
         self.deiconify() # Reveal the fully initialized main window
+        # Pane dimensions are only meaningful after the withdrawn main window
+        # has been revealed. Build and size the initial metadata preview now.
+        self.after_idle(self._sync_right_panel)
+        self.after(100, self._sync_right_panel)
 
     def report_callback_exception(self, exc, val, tb):
         if exc is KeyboardInterrupt:
@@ -527,19 +537,65 @@ class SpkrScannerApp(tk.Tk):
         if DEBUG_MODE:
             print(f"[DEBUG] Main tab changed to index: {selected_idx}")
         self.right_frame_processing.tkraise()
+        self._sync_right_panel()
 
     def _on_proc_tab_changed(self, event):
         selected_idx = self.proc_notebook.index(self.proc_notebook.select())
         if DEBUG_MODE:
             print(f"[DEBUG] Processing notebook tab changed to index: {selected_idx}")
-        # Stage 5 is the 5th tab, so index 4
-        if selected_idx == 4:
+        self._sync_right_panel()
+
+    def _sync_right_panel(self):
+        """Show the right-hand content appropriate to the selected tab."""
+        # Notebook change events can arrive while the UI is still being built.
+        if not hasattr(self, 'stage5_vars'):
+            return
+
+        main_idx = self.main_notebook.index(self.main_notebook.select())
+        proc_idx = self.proc_notebook.index(self.proc_notebook.select())
+
+        if main_idx == 0:  # Project Metadata
             self._create_stage5_viewer()
-            # Use after to ensure the window is drawn before setting sash
-            self.after(50, lambda: self.processing_paned_window.sashpos(0, self.processing_paned_window.winfo_height() * 3 // 4))
+            self._show_stage5_viewer_full_height()
+        elif proc_idx == 4:  # Stage 5: Extract Pressures
+            self._create_stage5_viewer()
+            self._show_stage5_viewer_with_cli()
         else:
             self._destroy_stage5_viewer()
             self._restore_cli_full_height()
+
+    def _show_stage5_viewer_full_height(self):
+        """Use the complete right pane for the Project Metadata preview."""
+        try:
+            panes = self.processing_paned_window.panes()
+            if len(panes) >= 2:
+                self.processing_paned_window.pane(self.stage5_viewer_frame, weight=1)
+                self.processing_paned_window.pane(panes[1], weight=0)
+            self.after(50, self._set_stage5_sash_bottom)
+        except tk.TclError:
+            pass
+
+    def _set_stage5_sash_bottom(self):
+        try:
+            self.processing_paned_window.sashpos(0, self.processing_paned_window.winfo_height())
+        except tk.TclError:
+            pass
+
+    def _show_stage5_viewer_with_cli(self):
+        """Restore the existing Stage 5 preview/CLI split."""
+        try:
+            panes = self.processing_paned_window.panes()
+            if len(panes) >= 2:
+                self.processing_paned_window.pane(self.stage5_viewer_frame, weight=3)
+                self.processing_paned_window.pane(panes[1], weight=1)
+            self.after(
+                50,
+                lambda: self.processing_paned_window.sashpos(
+                    0, self.processing_paned_window.winfo_height() * 3 // 4
+                )
+            )
+        except tk.TclError:
+            pass
 
     def _restore_cli_full_height(self):
         if DEBUG_MODE:
@@ -590,10 +646,6 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_canvas = FigureCanvasTkAgg(self.stage5_viewer.fig, master=self.stage5_viewer_frame)
         canvas_widget = self.stage5_canvas.get_tk_widget()
         canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        
-        # Make the viewer pane visible
-        self.processing_paned_window.pane(self.stage5_viewer_frame, weight=3)
-        self.processing_paned_window.pane(self.processing_paned_window.panes()[1], weight=1)
         
         self._schedule_update_stage5_preview()
 
@@ -771,25 +823,38 @@ class SpkrScannerApp(tk.Tk):
                 return positions
         return []
 
-    def _add_form_entry(self, parent, label_text, default_val, help_text=None, state_var=None):
+    def _add_form_entry(self, parent, label_text, default_val, help_text=None, state_var=None, button_text=None, button_command=None):
         lbl_frame = ttk.Frame(parent)
         lbl_frame.pack(anchor=tk.W, fill=tk.X, pady=(5, 0))
         lbl = ttk.Label(lbl_frame, text=label_text)
         lbl.pack(side=tk.LEFT)
             
         var = tk.StringVar(value=default_val)
-        entry = ttk.Entry(parent, textvariable=var)
-        entry.pack(anchor=tk.W, fill=tk.X, pady=(0, 5))
+        if button_text and button_command:
+            entry_frame = ttk.Frame(parent)
+            entry_frame.pack(anchor=tk.W, fill=tk.X, pady=(0, 5))
+            entry = ttk.Entry(entry_frame, textvariable=var)
+            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            btn = ttk.Button(entry_frame, text=button_text, command=button_command)
+            btn.pack(side=tk.LEFT, padx=(6, 0))
+        else:
+            entry = ttk.Entry(parent, textvariable=var)
+            entry.pack(anchor=tk.W, fill=tk.X, pady=(0, 5))
+            btn = None
         
         if help_text:
             ToolTip(lbl, help_text)
             ToolTip(entry, help_text)
+            if btn is not None:
+                ToolTip(btn, help_text)
             
         if state_var:
             def update_state(*args):
                 state = tk.NORMAL if state_var.get() else tk.DISABLED
                 entry.config(state=state)
                 lbl.config(state=state)
+                if btn is not None:
+                    btn.config(state=state)
             state_var.trace_add("write", update_state)
             update_state()
             
@@ -1219,26 +1284,49 @@ class SpkrScannerApp(tk.Tk):
 
     def _get_project_baffle_width_m(self):
         try:
-            tl = (
-                self._grid_value('wp_baffle_tl_r'),
-                self._grid_value('wp_baffle_tl_phi'),
-                self._grid_value('wp_baffle_tl_z'),
-            )
-            tr = (
-                self._grid_value('wp_baffle_tr_r'),
-                self._grid_value('wp_baffle_tr_phi'),
-                self._grid_value('wp_baffle_tr_z'),
-            )
-            if not all(tl + tr):
-                return None
-
-            tl_xyz = self._cyl_mm_to_xyz_mm(*tl)
-            tr_xyz = self._cyl_mm_to_xyz_mm(*tr)
+            _, tl_xyz, tr_xyz = self._get_project_baffle_front_corners_m()
             import math
-            width_m = math.dist(tl_xyz, tr_xyz) / 1000.0
+            width_m = math.dist(tl_xyz, tr_xyz)
             return width_m if width_m > 0 else None
         except Exception:
             return None
+
+    def _get_project_baffle_front_corners_m(self):
+        """Return BL/TL/TR in metres, inferring TL for a two-corner baffle."""
+        bl = (
+            self._grid_value('wp_baffle_bl_r'),
+            self._grid_value('wp_baffle_bl_phi'),
+            self._grid_value('wp_baffle_bl_z'),
+        )
+        tl = (
+            self._grid_value('wp_baffle_tl_r'),
+            self._grid_value('wp_baffle_tl_phi'),
+            self._grid_value('wp_baffle_tl_z'),
+        )
+        tr = (
+            self._grid_value('wp_baffle_tr_r'),
+            self._grid_value('wp_baffle_tr_phi'),
+            self._grid_value('wp_baffle_tr_z'),
+        )
+        if not all(bl + tr):
+            raise ValueError("Baffle bottom-left and top-right waypoints are required.")
+
+        bl_xyz_mm = self._cyl_mm_to_xyz_mm(*bl)
+        tr_xyz_mm = self._cyl_mm_to_xyz_mm(*tr)
+        if all(tl):
+            tl_xyz_mm = self._cyl_mm_to_xyz_mm(*tl)
+        elif any(tl):
+            raise ValueError("Baffle top-left waypoint is incomplete.")
+        else:
+            # Two diagonal corners define a vertical baffle: the left edge is
+            # parallel to Z, so inferred TL shares BL's X/Y and TR's height.
+            tl_xyz_mm = (bl_xyz_mm[0], bl_xyz_mm[1], tr_xyz_mm[2])
+
+        scale = 1.0 / 1000.0
+        return tuple(
+            tuple(float(coord) * scale for coord in point)
+            for point in (bl_xyz_mm, tl_xyz_mm, tr_xyz_mm)
+        )
 
     def _default_dut_depth_from_baffle(self, force=False):
         if not hasattr(self, 'stage5_vars') or 'dut_depth_x' not in self.stage5_vars:
@@ -1508,27 +1596,10 @@ class SpkrScannerApp(tk.Tk):
         try:
             import numpy as np
 
-            bl = (
-                self._grid_value('wp_baffle_bl_r'),
-                self._grid_value('wp_baffle_bl_phi'),
-                self._grid_value('wp_baffle_bl_z'),
-            )
-            tl = (
-                self._grid_value('wp_baffle_tl_r'),
-                self._grid_value('wp_baffle_tl_phi'),
-                self._grid_value('wp_baffle_tl_z'),
-            )
-            tr = (
-                self._grid_value('wp_baffle_tr_r'),
-                self._grid_value('wp_baffle_tr_phi'),
-                self._grid_value('wp_baffle_tr_z'),
-            )
-            if not all(bl + tl + tr):
-                raise ValueError("Baffle waypoints are incomplete.")
-
-            bl_xyz = np.array(self._cyl_mm_to_xyz_mm(*bl), dtype=float) / 1000.0
-            tl_xyz = np.array(self._cyl_mm_to_xyz_mm(*tl), dtype=float) / 1000.0
-            tr_xyz = np.array(self._cyl_mm_to_xyz_mm(*tr), dtype=float) / 1000.0
+            bl, tl, tr = self._get_project_baffle_front_corners_m()
+            bl_xyz = np.array(bl, dtype=float)
+            tl_xyz = np.array(tl, dtype=float)
+            tr_xyz = np.array(tr, dtype=float)
             depth_x = max(0.0, self._mm_to_m(self.stage5_vars['dut_depth_x'].get()))
 
             width_vec = tr_xyz - tl_xyz
@@ -1619,7 +1690,14 @@ class SpkrScannerApp(tk.Tk):
         main_settings_frame = ttk.LabelFrame(main_container, text="Main Settings", padding="10")
         main_settings_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
         
-        self.stage1_vars['fdw_rft_ms'] = self._add_form_entry(main_settings_frame, "Reflection Free Time (ms):", "5.0", "Reflection Free Time (ms): Defines the fixed window length at high frequencies.")
+        self.stage1_vars['fdw_rft_ms'] = self._add_form_entry(
+            main_settings_frame,
+            "Reflection Free Time (ms):",
+            "5.0",
+            "Reflection Free Time (ms): Defines the fixed window length at high frequencies.",
+            button_text="Calculator",
+            button_command=self._open_stage1_rft_calculator
+        )
         self.stage1_vars['fdw_oct_res'] = self._add_form_entry(main_settings_frame, "Octave Resolution (1/x):", "12", "Target Octave Resolution: Sets the fractional octave smoothing (e.g., 12 for 1/12th oct).")
         self.stage1_vars['fdw_max_cap_ms'] = self._add_form_entry(main_settings_frame, "Max Window Cap (ms):", "200.0", "Optional cap (ms) on the maximum window length. Will limit oct res at LF.")
         self.stage1_vars['enable_auto_gain'] = self._add_checkbutton(main_settings_frame, "Enable Auto Gain", False, "Enable global normalization across all files in the batch.")
@@ -1636,10 +1714,11 @@ class SpkrScannerApp(tk.Tk):
         self.stage1_vars['fdw_alpha_lf'] = self._add_form_entry(self.stage1_adv_frame, "Alpha LF:", "1.0", "Taper alpha for Low Frequencies.")
         self.stage1_vars['fdw_windows_per_oct'] = self._add_form_entry(self.stage1_adv_frame, "Windows per Octave:", "3", "Windows per octave. Interpolation is performed in complex domain between windows.")
         self.stage1_vars['peak_detect_threshold_db'] = self._add_form_entry(self.stage1_adv_frame, "Peak Detect Threshold (dB):", "-12.0", "Peak detection finds loudest peak, then searches for earlier peaks above this threshold. A reflection may be louder than the true direct sound peak.")
-        self.stage1_vars['fdw_f_min'] = self._add_form_entry(self.stage1_adv_frame, "Min Frequency (Hz):", "20.0", "Minimum frequency (Hz) for the X axis in the plot view of the FDW analysis. Visual only.")
-        self.stage1_vars['enable_smoothing'] = self._add_checkbutton(self.stage1_adv_frame, "Enable Smoothing", True, "Enable or disable complex smoothing.")
-        self.stage1_vars['keep_raw_and_smoothed'] = self._add_checkbutton(self.stage1_adv_frame, "Keep Raw & Smoothed", False, "Save both files if True.")
-        self.stage1_vars['show_plot'] = self._add_checkbutton(self.stage1_adv_frame, "Show Plot on Completion", True, "If True, launches the interactive data viewer after processing.")
+
+        stage1_debug_frame = ttk.LabelFrame(self.stage1_adv_frame, text="Debug / Inspection", padding="10")
+        stage1_debug_frame.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
+        self.stage1_vars['enable_smoothing'] = self._add_checkbutton(stage1_debug_frame, "Enable Smoothing", True, "Enable or disable complex smoothing.")
+        self.stage1_vars['keep_raw_and_smoothed'] = self._add_checkbutton(stage1_debug_frame, "Keep Raw & Smoothed", False, "Save both files if True.")
 
         # --- Button ---
         self.btn_stage1_run = ttk.Button(main_container, text="Run Stage 1", command=self._action_run_stage1)
@@ -1662,6 +1741,21 @@ class SpkrScannerApp(tk.Tk):
         else:
             self.stage1_adv_frame.pack(side=tk.TOP, fill=tk.X, pady=5, before=self.btn_stage1_run)
             self.btn_stage1_advanced.config(text="Hide Advanced Settings")
+
+    def _open_stage1_rft_calculator(self):
+        try:
+            from rft_calculator import RFTCalculatorWindow
+
+            def apply_rft(value):
+                self.stage1_vars['fdw_rft_ms'].set(value)
+
+            RFTCalculatorWindow(
+                parent=self,
+                initial_rft_ms=self.stage1_vars['fdw_rft_ms'].get(),
+                on_apply=apply_rft
+            )
+        except Exception as exc:
+            messagebox.showerror("RFT Calculator", f"Could not open RFT calculator:\n{exc}")
             
     def _update_cli(self):
         self._process_stage_job_events()
@@ -1806,7 +1900,6 @@ class SpkrScannerApp(tk.Tk):
                 'fdw_max_cap_ms': float(self.stage1_vars['fdw_max_cap_ms'].get()),
                 'enable_auto_gain': self.stage1_vars['enable_auto_gain'].get(),
                 'target_peak_db': float(self.stage1_vars['target_peak_db'].get()),
-                'show_plot': self.stage1_vars['show_plot'].get(),
                 'enable_smoothing': enable_smoothing,
                 'smoothing_oct_res': smooth_res,
                 'keep_raw_and_smoothed': self.stage1_vars['keep_raw_and_smoothed'].get(),
@@ -1814,7 +1907,6 @@ class SpkrScannerApp(tk.Tk):
                 'fdw_alpha_lf': float(self.stage1_vars['fdw_alpha_lf'].get()),
                 'fdw_windows_per_oct': int(self.stage1_vars['fdw_windows_per_oct'].get()),
                 'peak_detect_threshold_db': float(self.stage1_vars['peak_detect_threshold_db'].get()),
-                'fdw_f_min': float(self.stage1_vars['fdw_f_min'].get()),
                 'use_process_pool': True,
             }
         except Exception as exc:
@@ -1843,7 +1935,6 @@ class SpkrScannerApp(tk.Tk):
                 save_to_disk=True,
                 fdw_alpha_hf=settings['fdw_alpha_hf'],
                 fdw_alpha_lf=settings['fdw_alpha_lf'],
-                fdw_f_min=settings['fdw_f_min'],
                 fdw_windows_per_oct=settings['fdw_windows_per_oct'],
                 peak_detect_threshold_db=settings['peak_detect_threshold_db'],
                 enable_auto_gain=settings['enable_auto_gain'],
@@ -1855,7 +1946,7 @@ class SpkrScannerApp(tk.Tk):
 
     def _finish_stage1_job(self, payload):
         settings, results = payload
-        if results and settings['show_plot']:
+        if results:
             freqs, results_raw, results_smooth, meta = results
             n_fft = (len(freqs) - 1) * 2
             fs_common = int(round((freqs[1] - freqs[0]) * n_fft))
@@ -1871,10 +1962,8 @@ class SpkrScannerApp(tk.Tk):
             self.stage1_ui_instance = FDWViewer(
                 freqs, plot_data, meta, fs_common, settings['input_dir'], n_fft,
                 data_dict_smooth=plot_smooth,
-                fdw_f_min=settings['fdw_f_min'],
                 fdw_rft_ms=settings['fdw_rft_ms']
             )
-        if results:
             self._seed_stage3_start_from_npz(force=True)
         print("Stage 1 completed successfully.")
 
