@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.3.0] - 2026-09-03
+
+### Added
+
+- Stage 5 Live Preview provides full-resolution magnitude, phase, and impulse-response plots. Previous and Next cycle clockwise through the observation points and highlight the selected point in the 3D viewer. The displayed IR belongs to the selected point while its phase-zero marker remains tied to the on-axis timing reference.
+- Live Preview magnitude and phase smoothing can be set to Off, 1/3, 1/6, 1/12, 1/24, or 1/48 octave. Left-drag zooms, right-drag pans, and double-click restores automatic limits. Magnitude and phase share frequency limits, while each plot retains independent vertical limits until the preview closes.
+- Stage 5 microphone offsets support keyboard jogging in 1, 10, 25, 50, or 100 mm steps using Up and Down in the focused X, Y, or Z field.
+- The 3D viewer can display the acoustic origin detected by Stage 2 at the nearest available frequency bin. The frequency field snaps to the selected bin and is saved in the project JSON.
+- Pytest regression coverage now exercises the spherical-harmonic solver and pressure-extraction cores, including observation modes, optimized origins, regularization, capture padding, input formats, thread/process execution, persistent preview sessions, and bulk/preview equivalence.
+
+### Changed
+
+- Live Preview keeps the extraction core's multiprocessing pool warm while the window is open for maximum responsiveness.
+- Measurement arc sweeps always include the on-axis point, even when the range is not divisible by the increment. CTA-2034 retains its fixed angle set.
+- Duplicate observation coordinates are filtered out.
+- The TOF subtraction options display the calculated TOF distance.
+- The 3D viewer uses roll-free turntable orbiting.
+
+### Fixed
+
+- Min Phase Ref estimates TOF from the robust excess group delay of the measured/minimum-phase ratio.
+
 ## [2.2.18] - 2026-08-31
 Changed: Project baffle geometry now supports either two or three waypoints. Two opposite corners define a vertical baffle, while three waypoints allow sloped baffle planes.
 

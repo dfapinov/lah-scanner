@@ -23,6 +23,7 @@ from utils import spherical_to_cartesian, cartesian_to_spherical, apply_mic_cali
 
 from extract_pressures_core import IR_CAPTURE_PADDING_SAMPLES, evaluate_she_field
 from complex_to_ir_core import complex_to_ir
+from stage5_pressure_utils import centered_sweep_angles, get_min_phase_delay, get_tof_phasor
 
 # -------------------------------------------------
 # Shared Helpers
@@ -40,86 +41,6 @@ def _resolve_speed_of_sound(c_sound, coeff_path, fallback):
     except Exception:
         pass
     return float(fallback)
-
-def get_tof_phasor(freqs, dist_m, c_sound):
-    """Calculates the complex phase rotation array needed to subtract time-of-flight."""
-    return np.exp(1j * 2.0 * np.pi * freqs * (dist_m / c_sound))
-
-def get_min_phase_delay(p_complex, freqs, c_sound):
-    """
-    Computes the TOF delay by fitting the true unwrapped phase to the minimum phase 
-    derived from the magnitude response.
-    """
-    eps = np.finfo(float).eps
-    mag_db = 20 * np.log10(np.abs(p_complex) + eps)
-    
-    # 1. Create a dense linear frequency grid for minimum phase generation
-    fs_sim = 192000
-    n_fft = 262144
-    f_lin = np.fft.rfftfreq(n_fft, 1 / fs_sim)
-    
-    # 2. Interpolate magnitude to linear grid
-    mag_lin_db = np.interp(f_lin, freqs, mag_db)
-    
-    # 3. Taper out-of-band to prevent artifacts
-    f_min, f_max = freqs[0], freqs[-1]
-    fade_octaves = 1.0
-    f_lower_fade = f_min / (2.0 ** fade_octaves)
-    f_upper_fade = f_max * (2.0 ** fade_octaves)
-    
-    weights = np.ones_like(f_lin)
-    
-    lower_idx = (f_lin > f_lower_fade) & (f_lin < f_min)
-    if np.any(lower_idx):
-        norm_f = np.log2(f_lin[lower_idx] / f_lower_fade) / fade_octaves
-        weights[lower_idx] = 0.5 * (1 - np.cos(np.pi * norm_f))
-        
-    upper_idx = (f_lin > f_max) & (f_lin < f_upper_fade)
-    if np.any(upper_idx):
-        norm_f = np.log2(f_lin[upper_idx] / f_max) / fade_octaves
-        weights[upper_idx] = 0.5 * (1 + np.cos(np.pi * norm_f))
-        
-    weights[f_lin <= f_lower_fade] = 0.0
-    weights[f_lin >= f_upper_fade] = 0.0
-    
-    mag_lin_db *= weights
-    
-    # 4. Generate Minimum Phase via Real Cepstrum
-    ln_mag = mag_lin_db / 8.685889638
-    ceps = np.fft.irfft(ln_mag, n=n_fft)
-    
-    w = np.zeros(n_fft)
-    w[0] = 1.0
-    w[1:n_fft//2] = 2.0
-    w[n_fft//2] = 1.0
-    
-    complex_spec = np.fft.rfft(ceps * w)
-    phase_rad_lin = np.imag(complex_spec)
-    
-    # 5. Interpolate back to target_freqs
-    min_phase_rad = np.interp(freqs, f_lin, phase_rad_lin)
-    
-    # 6. Fit true phase to min phase to find delay
-    true_phase_rad = np.unwrap(np.angle(p_complex))
-    
-    # Align the phases at a low frequency to avoid 2*pi offset issues
-    idx_align = np.argmin(np.abs(freqs - 300.0))
-    offset = true_phase_rad[idx_align] - min_phase_rad[idx_align]
-    offset = np.round(offset / (2 * np.pi)) * 2 * np.pi
-    true_phase_rad -= offset
-    
-    fit_mask = (freqs >= 100.0) & (freqs <= 20000.0)
-    if not np.any(fit_mask):
-        fit_mask = freqs > 0 # fallback
-        
-    omega = 2.0 * np.pi * freqs[fit_mask]
-    phase_diff = true_phase_rad[fit_mask] - min_phase_rad[fit_mask]
-    
-    m, _, _, _ = np.linalg.lstsq(omega[:, np.newaxis], phase_diff, rcond=None)
-    tau = -m[0]
-    
-    tof_ref_dist = tau * c_sound
-    return tof_ref_dist
 
 # -------------------------------------------------
 # CTA-2034 Helpers
@@ -413,15 +334,16 @@ def run_cta2034_extraction(
         subtract_tof = "Ref Origin" if subtract_tof else "Off"
         
     if subtract_tof.lower() == "ref origin":
-        # NOTE: Using `r_in` (the radius before cartesian mic offsets are applied) 
-        # ensures the TOF reference point shifts *with* the mic offset. For example, 
-        # if the mic offset aligns with a tweeter, the TOF is calculated back to that 
-        # offset point. Previously, this used `r_final` which always calculated TOF 
-        # back to the absolute 0,0,0 origin regardless of offset.
+        # Geometry-only mode. r_in is the configured observation radius before
+        # Cartesian mic/reference offsets; those offsets move the reference and
+        # microphone together and therefore must not change the subtracted delay.
         tof_ref_dist = np.min(r_in)
         print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m from Ref Origin)")
         p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
     elif subtract_tof.lower() == "ir peak":
+        # Time-domain mode. Generate only the on-axis full-resolution IR, use its
+        # earliest significant peak as the physical delay, then apply that same
+        # delay to every CTA response so relative timing remains unchanged.
         from fdw_smoothing_core import get_earliest_significant_peak
         idx_on_axis = map_indices['H0']
         p_on_axis = p_raw_all[:, idx_on_axis]
@@ -434,6 +356,9 @@ def run_cta2034_extraction(
         print(f"Detected IR peak at {peak_time*1000:.3f} ms (ref {tof_ref_dist:.6f} m)")
         p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
     elif subtract_tof.lower() == "min phase ref":
+        # Frequency-domain mode. Compare the on-axis complex response with the
+        # minimum-phase response implied by its magnitude and robustly estimate
+        # the remaining linear excess group delay. Apply it to the whole set.
         idx_on_axis = map_indices['H0']
         p_on_axis = p_raw_all[:, idx_on_axis]
         tof_ref_dist = get_min_phase_delay(p_on_axis, freqs, c_sound)
@@ -441,6 +366,8 @@ def run_cta2034_extraction(
         print(f"Detected Min Phase delay: {tof_ref_dist/c_sound*1000:.3f} ms (ref {tof_ref_dist:.6f} m)")
         p_raw_all *= get_tof_phasor(freqs, tof_ref_dist, c_sound)[:, np.newaxis]
     else:
+        # Off: retain physical propagation phase. The separate artificial
+        # capture-padding correction has already occurred in evaluate_she_field.
         print("TOF subtraction: OFF")
 
     print("Computing Spinorama metrics...")
@@ -544,7 +471,7 @@ def run_sweep_extraction(
         U = np.cross(F, R)
         rot_matrix = np.array([F, R, U]).T
 
-        off_range = list(range(-rng, rng + 1, inc))
+        off_range = centered_sweep_angles(rng, inc)
         for ang_deg in off_range:
             ang_rad = np.radians(ang_deg)
             val_str = f"+{ang_deg}" if ang_deg >= 0 else f"{ang_deg}"
@@ -580,19 +507,23 @@ def run_sweep_extraction(
 
     tof_ref_dist = None
     if subtract_tof.lower() == "ref origin":
-        # NOTE: Using `r_in` (the radius before cartesian mic offsets are applied) 
-        # ensures the TOF reference point shifts *with* the mic offset. For example, 
-        # if the mic offset aligns with a tweeter, the TOF is calculated back to that 
-        # offset point. Previously, this used `r_final` which always calculated TOF 
-        # back to the absolute 0,0,0 origin regardless of offset.
+        # Geometry-only mode. Use the configured radius before Cartesian offsets;
+        # offsets move the reference and mic together, leaving this delay at (for
+        # example) 1 m. No response analysis is needed for this mode.
         r_acous = r_in
         tof_ref_dist = np.min(r_acous)
         print(f"TOF subtraction ON (ref {tof_ref_dist:.6f} m from Ref Origin)")
     elif subtract_tof.lower() == "ir peak":
+        # Deferred until the calibrated full-resolution complex responses exist.
+        # Only then can the on-axis reference IR be synthesized and peak-tested.
         pass
     elif subtract_tof.lower() == "min phase ref":
+        # Also deferred until the calibrated on-axis complex response exists.
+        # This mode remains entirely in the frequency domain.
         pass
     else:
+        # Off retains physical propagation phase; evaluate_she_field still
+        # removes the separate artificial capture-padding phase.
         print("TOF subtraction: OFF")
 
     result_raw = evaluate_she_field(
@@ -620,6 +551,9 @@ def run_sweep_extraction(
     frd_offset_val = float(frd_db_offset) if frd_db_offset is not None else getattr(config_process, 'FRD_DB_OFFSET', 0.0)
 
     if subtract_tof.lower() == "ir peak":
+        # Time-domain mode. Select the on-axis (or manual-list reference) response,
+        # synthesize one full-resolution IR, and use its earliest significant peak.
+        # The resulting single delay is shared by all exported observation points.
         from fdw_smoothing_core import get_earliest_significant_peak
         
         if use_coord_list:
@@ -646,6 +580,9 @@ def run_sweep_extraction(
         print(f"Detected IR peak at {peak_time*1000:.3f} ms (ref {tof_ref_dist:.6f} m) from index {idx_ref}")
 
     if subtract_tof.lower() == "min phase ref":
+        # Frequency-domain mode. The calibrated on-axis/reference response is
+        # divided by its magnitude-derived minimum-phase equivalent; robust local
+        # excess group delay yields one common delay for the complete export set.
         if use_coord_list:
             idx_ref = int(np.argmin(r_in))
         else:
@@ -666,8 +603,11 @@ def run_sweep_extraction(
         print(f"Detected Min Phase delay at {tof_ref_dist/c_sound*1000:.3f} ms (ref {tof_ref_dist:.6f} m) from index {idx_ref}")
 
     if subtract_tof.lower() in ("ref origin", "ir peak", "min phase ref") and tof_ref_dist is not None:
+        # A positive phase rotation advances every response by the chosen delay.
+        # Sharing this phasor preserves relative TOF between observation points.
         tof_phasor = get_tof_phasor(freqs, tof_ref_dist, c_sound)
     else:
+        # Off writes the pressure phase after capture-padding correction only.
         tof_phasor = None
 
     if save_to_disk:

@@ -84,7 +84,7 @@ class FDWView:
         plot_f_min = self._first_non_dc_freq(freqs)
         
         self.ax1.clear()
-            
+
         mag_db_raw = 20 * np.log10(np.abs(H_raw) + 1e-12)
         
         if H_smooth is not None:
@@ -1083,6 +1083,10 @@ class Stage5Viewer:
     MVC View Component: Knows nothing about Tkinter, NiceGUI, or external state.
     """
     def __init__(self, figsize=(7, 6), dpi=100):
+        # Matplotlib 3.10 defaults to arcball rotation, which permits camera
+        # roll.  The azimuth/elevation style behaves like a turntable and
+        # keeps the speaker upright throughout mouse orbiting.
+        plt.rcParams['axes3d.mouserotationstyle'] = 'azel'
         self.fig = plt.figure(figsize=figsize, dpi=dpi)
         self.fig.patch.set_facecolor('white')
         self.ax = self.fig.add_subplot(111, projection='3d')
@@ -1094,7 +1098,7 @@ class Stage5Viewer:
         self.ax.set_zlabel('Z (Height) [m]')
         
         # Set the initial camera angle (elevation and azimuth)
-        self.ax.view_init(elev=30, azim=-45)
+        self.ax.view_init(elev=30, azim=-45, roll=0, vertical_axis='z')
         
         # Track drawn objects so we can remove them cleanly without clearing the axes
         self._drawn_artists = []
@@ -1102,7 +1106,7 @@ class Stage5Viewer:
     def update_view(self, box_dims=(0.2, 0.3, 0.4), mic_coords_xyz=None, 
                     ref_origin=(0.0, 0.0, 0.0), zero_theta_deg=90.0, zero_phi_deg=0.0,
                     named_points_xyz=None, z_center=None, box_center=(0.0, 0.0, 0.0),
-                    box_vertices=None):
+                    box_vertices=None, active_mic_index=None, show_reference_axis=True):
         """
         Updates the 3D plot with new parameters without resetting camera rotation.
         """
@@ -1158,6 +1162,15 @@ class Stage5Viewer:
                             c='blue', marker='o', s=15, alpha=0.7, label='Mic Positions')
             self._drawn_artists.append(mic_scatter)
             bounds_points.append(mic_coords_xyz)
+
+            if active_mic_index is not None and 0 <= int(active_mic_index) < len(mic_coords_xyz):
+                active_point = mic_coords_xyz[int(active_mic_index)]
+                active_ring = self.ax.scatter(
+                    [active_point[0]], [active_point[1]], [active_point[2]],
+                    marker='o', s=95, facecolors='none', edgecolors='#ff8c00',
+                    linewidths=1.4, depthshade=False,
+                )
+                self._drawn_artists.append(active_ring)
             
             dists = np.linalg.norm(mic_coords_xyz, axis=1)
             if len(dists) > 0:
@@ -1178,30 +1191,30 @@ class Stage5Viewer:
                 max_radius = max(max_radius, float(np.linalg.norm([x, y, z])))
                 bounds_points.append(np.array([[x, y, z]]))
 
-        # 4. Draw Reference Origin and Axes
-        ox, oy, oz = ref_origin
-        ref_scatter = self.ax.scatter([ox], [oy], [oz], c='red', marker='P', s=40, label='Ref Origin (Offset)')
-        self._drawn_artists.append(ref_scatter)
-        bounds_points.append(np.array([[ox, oy, oz]]))
-        
-        # Convert angles to radians
-        th = np.radians(zero_theta_deg)
-        ph = np.radians(zero_phi_deg)
-        
-        # Primary reference axis (Forward / 0 degrees)
-        arrow_len = max_radius * 0.8 if max_radius > 0 else 1.0
-        fx = arrow_len * np.sin(th) * np.cos(ph)
-        fy = arrow_len * np.sin(th) * np.sin(ph)
-        fz = arrow_len * np.cos(th)
-        
-        quiv = self.ax.quiver(ox, oy, oz, fx, fy, fz, color='red', arrow_length_ratio=0.1, 
-                       linewidth=2, label='Zero Axis (Front)')
-        self._drawn_artists.append(quiv)
-        bounds_points.append(np.array([[ox + fx, oy + fy, oz + fz]]))
+        # 4. Draw the Stage 5 reference origin and axis only in Stage 5 context.
+        if show_reference_axis:
+            ox, oy, oz = ref_origin
+            ref_scatter = self.ax.scatter([ox], [oy], [oz], c='red', marker='P', s=40, label='Ref Origin (Offset)')
+            self._drawn_artists.append(ref_scatter)
+            bounds_points.append(np.array([[ox, oy, oz]]))
+
+            th = np.radians(zero_theta_deg)
+            ph = np.radians(zero_phi_deg)
+            arrow_len = max_radius * 0.8 if max_radius > 0 else 1.0
+            fx = arrow_len * np.sin(th) * np.cos(ph)
+            fy = arrow_len * np.sin(th) * np.sin(ph)
+            fz = arrow_len * np.cos(th)
+
+            quiv = self.ax.quiver(ox, oy, oz, fx, fy, fz, color='red', arrow_length_ratio=0.1,
+                           linewidth=2, label='Zero Axis (Front)')
+            self._drawn_artists.append(quiv)
+            bounds_points.append(np.array([[ox + fx, oy + fy, oz + fz]]))
 
         # Place a multi-column legend at the bottom of the plot area
-        leg = self.ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize='small', frameon=False)
-        self._drawn_artists.append(leg)
+        handles, labels = self.ax.get_legend_handles_labels()
+        if handles:
+            leg = self.ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.10), ncol=4, fontsize='small', frameon=False)
+            self._drawn_artists.append(leg)
         
         self._set_axes_equal(data_points=np.vstack(bounds_points), z_center=z_center)
         self.fig.canvas.draw_idle()

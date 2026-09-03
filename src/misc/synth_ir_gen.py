@@ -35,7 +35,7 @@ from scipy.io.wavfile import write as wavwrite  # Function to save numpy arrays 
 # Define the base directory as the folder where this script is located
 BASE_DIR = Path(__file__).resolve().parent
 # Define the path to the input CSV file containing the microphone coordinates
-DEFAULT_COORDS_CSV = BASE_DIR /   "cylindrical_grid_1000pts.csv"
+DEFAULT_COORDS_CSV = BASE_DIR /   "synth_ir_grid.csv"
 # Define the directory where the generated WAV files will be saved
 DEFAULT_OUT_DIR = BASE_DIR / "input_irs_synth"
 
@@ -43,21 +43,21 @@ DEFAULT_OUT_DIR = BASE_DIR / "input_irs_synth"
 # The 3D coordinate (X, Y, Z) for the center of our simulated speaker piston
 SOURCE_CENTER_M = (0.0, 0.0, 0.0)  # Offset center
 # The physical radius of the simulated piston in meters (0.015m = 15mm radius = 30mm diameter tweeter)
-PISTON_RADIUS_M = 0.015              # 30mm radius
+PISTON_RADIUS_M = 0.015             # 30mm diameter
 # How many discrete point sources (monopoles) we will use to approximate the flat piston surface
 # More points = more accurate high frequencies, but slower calculation
-PISTON_POINT_COUNT = 200            # Surface discretization
+PISTON_POINT_COUNT = 100           # Surface discretization
 # The direction the piston is facing as a 3D vector. (1, 0, 0) means it points straight along the positive X axis
 PISTON_FACING_AXIS = (1.0, 0.0, 0.0)# Facing +X
 
 # A simple multiplier to make the final audio files louder or quieter
-VOLUME_GAIN = 1.0
+VOLUME_GAIN = 0.8
 
 # --- AUDIO SETTINGS ---
 # The sample rate for the audio files (48,000 samples per second is standard for high quality audio)
 DEFAULT_FS = 48_000
 # How long the final impulse response audio file should be, in seconds
-DEFAULT_DURATION_S = 0.1      # Output will be exactly this length (e.g. 4800 samples)
+DEFAULT_DURATION_S = 0.2      # Output will be exactly this length (e.g. 4800 samples)
 # The speed of sound in air, in meters per second (approximate room temperature)
 DEFAULT_C = 343.0
 # The frequency at which we start gently rolling off the high frequencies to prevent digital aliasing

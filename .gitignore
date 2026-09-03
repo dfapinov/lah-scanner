@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.tmp_pytest/
+.tmp_uv_cache/
 origins_cache*.pkl

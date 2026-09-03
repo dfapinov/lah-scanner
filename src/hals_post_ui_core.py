@@ -45,7 +45,7 @@ GUI_TOOLTIPS = {
     'output_dir': "Directory where final extracted FRD and/or WAV files will be saved.",
     'frd_prefix': "Prefix added to the beginning of all extracted file names.",
     'frd_db_offset': "Scales the exported FRD dB levels (does not affect IR wav files).",
-    'subtract_tof': "Mathematically subtract the time-of-flight phase delay. 'Ref Origin' uses the physical distance. 'IR Peak' dynamically detects the impulse response peak. 'Min Phase Ref' fits unwrapped phase to minimum phase.",
+    'subtract_tof': "Mathematically subtract the time-of-flight phase delay. 'Ref Origin' uses the physical distance. 'IR Peak' dynamically detects the impulse response peak. 'Min Phase Ref' robustly estimates the linear excess group delay relative to minimum phase.",
     'generate_ir_files': "If checked, generates .wav impulse responses along with the standard frequency response (.frd) text files.",
     'apply_mic_cal': "Applies the selected microphone calibration file to the extracted results.",
     'mic_cal_mode': "Subtract (standard for measurement mics where the cal file describes the mic's own response) or Add.",
@@ -53,6 +53,8 @@ GUI_TOOLTIPS = {
     'offset_mic_y': "Offsets the measurement reference center relative to the physical grid center, in millimeters.",
     'offset_mic_z': "Offsets the measurement reference center relative to the physical grid center, in millimeters.",
     'dut_depth_x': "Cabinet depth in millimeters. Stage 5 converts this to meters before running the extraction scripts.",
+    'show_stage2_origin': "Display the frequency-dependent acoustic origin detected by Stage 2 in the 3D viewer.",
+    'stage2_origin_frequency_hz': "Requested acoustic-origin frequency. The nearest stored Stage 2 frequency bin is used and written back here.",
     'zero_theta_deg': "Defines which physical angle represents the front 'on-axis' of the speaker (Theta).",
     'zero_phi_deg': "Defines which physical angle represents the front 'on-axis' of the speaker (Phi).",
     'dist_mic': "Distance from the reference center to the virtual microphone.",
@@ -277,8 +279,21 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_viewer = None
         self.stage5_canvas = None
         self.stage5_update_job = None
+        self.stage5_live_window = None
+        self.stage5_live_update_job = None
+        self.stage5_live_generation = 0
+        self.stage5_live_running = False
+        self.stage5_live_queue = queue.Queue()
+        self.stage5_live_point_index = 0
+        self.stage5_live_evaluator = None
+        self.stage5_live_evaluator_path = None
+        self.stage5_live_last_result = None
+        self.stage5_live_plot_limits = {}
+        self.stage5_live_plot_drag = None
 
         self._build_ui()
+        self.bind("<FocusIn>", self._raise_stage5_live_with_main, add="+")
+        self.bind("<Map>", self._raise_stage5_live_with_main, add="+")
         
         # Schedule splash screen to close and main window to show after 1000ms
         self.after(1500, self._close_splash)
@@ -557,9 +572,11 @@ class SpkrScannerApp(tk.Tk):
         if main_idx == 0:  # Project Metadata
             self._create_stage5_viewer()
             self._show_stage5_viewer_full_height()
+            self._schedule_update_stage5_preview()
         elif proc_idx == 4:  # Stage 5: Extract Pressures
             self._create_stage5_viewer()
             self._show_stage5_viewer_with_cli()
+            self._schedule_update_stage5_preview()
         else:
             self._destroy_stage5_viewer()
             self._restore_cli_full_height()
@@ -628,15 +645,38 @@ class SpkrScannerApp(tk.Tk):
         
         dut_frame = ttk.Frame(top_bar, relief=tk.GROOVE, borderwidth=2)
         dut_frame.pack(side=tk.LEFT, fill=tk.Y)
-        
-        ttk.Label(dut_frame, text="DUT Baffle:", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(5, 10), pady=2)
-        
-        self._add_labeled_entry(dut_frame, "Depth X (mm):", self.stage5_vars['dut_depth_x'], 7, GUI_TOOLTIPS.get('dut_depth_x'))
+
+        dut_row = ttk.Frame(dut_frame)
+        dut_row.pack(side=tk.TOP, fill=tk.X, anchor=tk.W)
+        ttk.Label(dut_row, text="DUT Baffle:").pack(side=tk.LEFT, padx=(5, 10), pady=2)
+        self._add_labeled_entry(dut_row, "Depth X (mm):", self.stage5_vars['dut_depth_x'], 7, GUI_TOOLTIPS.get('dut_depth_x'))
+
+        origin_row = ttk.Frame(dut_frame)
+        origin_row.pack(side=tk.TOP, fill=tk.X, anchor=tk.W, pady=(0, 2))
+        origin_toggle = ttk.Checkbutton(
+            origin_row,
+            text="Show Stage 2 acoustic origin",
+            variable=self.stage5_vars['show_stage2_origin'],
+            command=self._schedule_update_stage5_preview,
+        )
+        origin_toggle.pack(side=tk.LEFT, padx=(5, 3))
+        ToolTip(origin_toggle, GUI_TOOLTIPS['show_stage2_origin'])
+        self._add_labeled_entry(
+            origin_row,
+            "Frequency (Hz):",
+            self.stage5_vars['stage2_origin_frequency_hz'],
+            9,
+            GUI_TOOLTIPS['stage2_origin_frequency_hz'],
+        )
+        self.stage2_origin_status_var = tk.StringVar(value="")
+        ttk.Label(origin_row, textvariable=self.stage2_origin_status_var, font=("Arial", 8)).pack(
+            side=tk.LEFT, padx=(4, 6)
+        )
         
         ttk.Button(top_bar, text="Save View Image", command=self._save_stage5_image).pack(side=tk.RIGHT, padx=5)
         ttk.Separator(top_bar, orient='vertical').pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=2)
 
-        note_text = "Note: Left mouse click to drag view, middle mouse click to shift view, right mouse click to zoom."
+        note_text = "Note: Left mouse drag orbits on the turntable, middle drag shifts, and right drag zooms."
         self.stage5_note_label = ttk.Label(self.stage5_viewer_frame, text=note_text, font=("Arial", 8, "italic"))
         self.stage5_note_label.pack(side=tk.TOP, pady=(0, 2))
 
@@ -1592,6 +1632,51 @@ class SpkrScannerApp(tk.Tk):
                 continue
         return points
 
+    def _get_stage2_acoustic_origin_point(self):
+        """Load and select the requested frequency-dependent Stage 2 origin."""
+        status_var = getattr(self, 'stage2_origin_status_var', None)
+        show_var = self.stage5_vars.get('show_stage2_origin')
+        if show_var is None or not show_var.get():
+            if status_var is not None:
+                status_var.set("")
+            return None
+
+        try:
+            import numpy as np
+            import schema
+            from stage5_pressure_utils import nearest_acoustic_origin
+
+            requested_hz = float(self.stage5_vars['stage2_origin_frequency_hz'].get())
+            source_path = os.path.join(
+                self.project_dir.get(),
+                "outputs",
+                f"{self.project_name.get()}_complex_data.npz",
+            )
+            with np.load(source_path, allow_pickle=True) as stage2_data:
+                if schema.ORIGINS_MM not in stage2_data:
+                    raise ValueError("Stage 2 origins have not been calculated yet.")
+                actual_hz, origin_m = nearest_acoustic_origin(
+                    stage2_data[schema.FREQS],
+                    stage2_data[schema.ORIGINS_MM],
+                    requested_hz,
+                )
+
+            # Make the control and persisted project setting describe the bin
+            # actually used by the viewer, rather than the original request.
+            actual_text = f"{actual_hz:.0f}"
+            if self.stage5_vars['stage2_origin_frequency_hz'].get() != actual_text:
+                self.stage5_vars['stage2_origin_frequency_hz'].set(actual_text)
+            if status_var is not None:
+                status_var.set("")
+            return {
+                'name': f"Stage 2 Origin ({actual_hz:g} Hz)",
+                'xyz': tuple(float(value) for value in origin_m),
+            }
+        except (OSError, KeyError, TypeError, ValueError):
+            if status_var is not None:
+                status_var.set("unavailable")
+            return None
+
     def _get_project_baffle_box_m(self):
         try:
             import numpy as np
@@ -1802,7 +1887,7 @@ class SpkrScannerApp(tk.Tk):
     def _stage_run_buttons(self):
         names = (
             'btn_stage1_run', 'btn_stage2_run', 'btn_stage3_run',
-            'btn_stage4_run', 'btn_stage5_run'
+            'btn_stage4_run', 'btn_stage5_live', 'btn_stage5_run'
         )
         return [getattr(self, name) for name in names if hasattr(self, name)]
 
@@ -1817,6 +1902,11 @@ class SpkrScannerApp(tk.Tk):
                 f"{self.active_stage_job} is still running. Wait for it to finish before starting {stage_name}."
             )
             return False
+
+        # Do not let a persistent preview pool compete with a full processing
+        # stage for the same CPU cores.
+        if self.stage5_live_window is not None:
+            self._close_stage5_live_preview(wait_for_pool=True)
 
         self.active_stage_job = stage_name
         self._set_stage_run_buttons(tk.DISABLED)
@@ -2764,18 +2854,9 @@ class SpkrScannerApp(tk.Tk):
 
         self.stage5_vars['frd_db_offset'] = self._add_form_entry(main_settings_frame, "FRD dB Offset:", "0.0", GUI_TOOLTIPS.get('frd_db_offset'))
 
-        check_frame = ttk.Frame(main_settings_frame)
-        check_frame.pack(fill=tk.X, pady=5)
-        
-        combo_frame = ttk.Frame(check_frame)
-        combo_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(combo_frame, text="Subtract TOF Phase:").pack(side=tk.LEFT, padx=(0, 5))
-        self.stage5_vars['subtract_tof'] = tk.StringVar(value="Ref Origin")
-        cb_tof = ttk.Combobox(combo_frame, textvariable=self.stage5_vars['subtract_tof'], values=["Off", "Ref Origin", "IR Peak", "Min Phase Ref"], state="readonly", width=15)
-        cb_tof.pack(side=tk.LEFT)
-        if GUI_TOOLTIPS.get('subtract_tof'): ToolTip(cb_tof, GUI_TOOLTIPS['subtract_tof'])
-
-        self.stage5_vars['generate_ir_files'] = self._add_checkbutton(check_frame, "Generate IR Files (.wav)", False, GUI_TOOLTIPS.get('generate_ir_files'))
+        self.stage5_vars['generate_ir_files'] = self._add_checkbutton(
+            main_settings_frame, "Generate IR Files (.wav)", False, GUI_TOOLTIPS.get('generate_ir_files')
+        )
 
         # --- Microphone Calibration ---
         mic_cal_frame = ttk.LabelFrame(main_container, text="Microphone Calibration", padding="10")
@@ -2808,22 +2889,87 @@ class SpkrScannerApp(tk.Tk):
         self.lbl_mic_cal_fallback.pack(side=tk.LEFT, padx=(10, 0))
         self.stage5_vars['mic_cal_file'].trace_add("write", self._check_mic_cal_status)
 
-        # --- Reference Axis ---
-        ref_axis_frame = ttk.LabelFrame(main_container, text="Reference Axis", padding="10")
+        # --- Reference Axis & Phase ---
+        ref_axis_frame = ttk.LabelFrame(main_container, text="Reference Axis & Phase", padding="10")
         ref_axis_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
 
-        offset_frame = ttk.Frame(ref_axis_frame)
-        offset_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
-        ttk.Label(offset_frame, text="Mic Offset (mm):").pack(side=tk.LEFT, padx=(0, 10))
-        self.stage5_vars['offset_mic_x'] = self._add_labeled_entry(offset_frame, "X:", "0.0", 7, GUI_TOOLTIPS.get('offset_mic_x'))
-        self.stage5_vars['offset_mic_y'] = self._add_labeled_entry(offset_frame, "Y:", "0.0", 7, GUI_TOOLTIPS.get('offset_mic_y'))
-        self.stage5_vars['offset_mic_z'] = self._add_labeled_entry(offset_frame, "Z:", "0.0", 7, GUI_TOOLTIPS.get('offset_mic_z'))
+        reference_geometry_frame = ttk.Frame(ref_axis_frame)
+        reference_geometry_frame.pack(side=tk.TOP, fill=tk.X)
 
-        zero_angle_frame = ttk.Frame(ref_axis_frame)
-        zero_angle_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
+        offset_frame = ttk.Frame(reference_geometry_frame)
+        offset_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
+        ttk.Label(offset_frame, text="Mic Offset (mm):").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        self.stage5_offset_entries = {}
+        for column, axis in enumerate(('x', 'y', 'z'), start=1):
+            axis_frame = ttk.Frame(offset_frame)
+            axis_frame.grid(row=0, column=column, sticky=tk.N, padx=8)
+            label = ttk.Label(axis_frame, text=f"{axis.upper()}:")
+            label.grid(row=0, column=0, sticky=tk.E, padx=(0, 3))
+            var_key = f'offset_mic_{axis}'
+            value_var = tk.StringVar(value="0.0")
+            self.stage5_vars[var_key] = value_var
+            entry = ttk.Entry(axis_frame, textvariable=value_var, width=7)
+            entry.grid(row=0, column=1, sticky=tk.W)
+            entry.bind("<Up>", lambda event, key=var_key: self._jog_stage5_offset(key, 1))
+            entry.bind("<Down>", lambda event, key=var_key: self._jog_stage5_offset(key, -1))
+            entry.bind("<FocusOut>", self._schedule_update_stage5_preview)
+            entry.bind("<Return>", self._schedule_update_stage5_preview)
+            self.stage5_offset_entries[axis] = entry
+            help_text = GUI_TOOLTIPS.get(var_key)
+            if help_text:
+                ToolTip(label, help_text)
+                ToolTip(entry, help_text)
+
+        step_frame = ttk.Frame(offset_frame)
+        step_frame.grid(row=0, column=4, sticky=tk.N, padx=(18, 0))
+        ttk.Label(step_frame, text="Jog step:").pack(side=tk.LEFT, padx=(0, 5))
+        self.stage5_vars['offset_step_mm'] = tk.StringVar(value="10")
+        step_combo = ttk.Combobox(
+            step_frame,
+            textvariable=self.stage5_vars['offset_step_mm'],
+            values=("1", "10", "25", "50", "100"),
+            state="readonly",
+            width=6,
+        )
+        step_combo.pack(side=tk.LEFT)
+        ttk.Label(step_frame, text="mm").pack(side=tk.LEFT, padx=(3, 0))
+
+        jog_tip = ttk.Label(
+            offset_frame,
+            text="Tip: focus an X, Y, or Z value and press ↑ / ↓ to jog it.",
+            font=("Arial", 8, "italic"),
+            anchor=tk.W,
+            justify=tk.LEFT,
+        )
+        jog_tip.grid(row=1, column=0, columnspan=5, sticky=tk.W, pady=(4, 0))
+
+        zero_angle_frame = ttk.Frame(reference_geometry_frame)
+        zero_angle_frame.pack(side=tk.TOP, fill=tk.X, pady=(7, 2))
         ttk.Label(zero_angle_frame, text="Zero Angle (deg):").pack(side=tk.LEFT, padx=(0, 10))
         self.stage5_vars['zero_theta_deg'] = self._add_labeled_entry(zero_angle_frame, "Theta:", "90.0", 5, GUI_TOOLTIPS.get('zero_theta_deg'))
         self.stage5_vars['zero_phi_deg'] = self._add_labeled_entry(zero_angle_frame, "Phi:", "0.0", 5, GUI_TOOLTIPS.get('zero_phi_deg'))
+
+        phase_frame = ttk.Frame(ref_axis_frame)
+        phase_frame.pack(side=tk.TOP, fill=tk.X, pady=(8, 0))
+        ttk.Label(phase_frame, text="Subtract TOF Phase:").pack(side=tk.LEFT, padx=(0, 5))
+        self.stage5_vars['subtract_tof'] = tk.StringVar(value="Ref Origin")
+        cb_tof = ttk.Combobox(
+            phase_frame,
+            textvariable=self.stage5_vars['subtract_tof'],
+            values=["Off", "Ref Origin", "Min Phase Ref", "IR Peak"],
+            state="readonly",
+            width=15,
+        )
+        cb_tof.pack(side=tk.LEFT)
+        if GUI_TOOLTIPS.get('subtract_tof'):
+            ToolTip(cb_tof, GUI_TOOLTIPS['subtract_tof'])
+        self.stage5_tof_distance_var = tk.StringVar(value="")
+        ttk.Label(
+            phase_frame,
+            textvariable=self.stage5_tof_distance_var,
+            anchor=tk.W,
+            font=("Arial", 8),
+        ).pack(side=tk.LEFT, padx=(10, 6))
 
         # --- Evaluation Mode ---
         eval_frame = ttk.LabelFrame(main_container, text="Evaluation Mode", padding="10")
@@ -2889,7 +3035,7 @@ class SpkrScannerApp(tk.Tk):
             self._set_widget_state(self.stage5_dist_frame, tk.DISABLED if is_manual else tk.NORMAL)
             self._set_widget_state(self.stage5_arc_frame, tk.DISABLED if is_manual or is_cta else tk.NORMAL)
             self.btn_stage5_edit_coords.config(state=tk.NORMAL if is_manual else tk.DISABLED)
-            self._set_widget_state(ref_axis_frame, tk.DISABLED if is_manual else tk.NORMAL)
+            self._set_widget_state(reference_geometry_frame, tk.DISABLED if is_manual else tk.NORMAL)
 
         # Add traces to all relevant vars to trigger live preview update
         for key in ['cta_mode', 'manual_list_mode', 'subtract_tof', 'generate_ir_files', 'direction']:
@@ -2903,6 +3049,8 @@ class SpkrScannerApp(tk.Tk):
         # Baffle width/height/position come from the project baffle waypoints.
         default_dut_depth = self._get_project_baffle_width_m()
         self.stage5_vars['dut_depth_x'] = tk.StringVar(value=f"{default_dut_depth * 1000.0:.3f}" if default_dut_depth else "0.0")
+        self.stage5_vars['show_stage2_origin'] = tk.BooleanVar(value=False)
+        self.stage5_vars['stage2_origin_frequency_hz'] = tk.StringVar(value="1000")
 
         # Bind updates for entries that don't use the trace system
         for var_key in ['dist_mic', 'range_deg', 'increment_deg', 'offset_mic_x', 'offset_mic_y', 'offset_mic_z', 'zero_theta_deg', 'zero_phi_deg', 'dut_depth_x']:
@@ -2910,6 +3058,26 @@ class SpkrScannerApp(tk.Tk):
             self.stage5_vars[var_key].trace_add('write', self._schedule_update_stage5_preview)
 
         _sync_eval_ui()
+
+        # --- Live Preview ---
+        preview_frame = ttk.LabelFrame(main_container, text="Preview", padding="10")
+        preview_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
+        preview_controls = ttk.Frame(preview_frame)
+        preview_controls.pack(side=tk.TOP, fill=tk.X)
+        self.btn_stage5_prev = ttk.Button(
+            preview_controls, text="Previous", command=lambda: self._step_stage5_live_point(-1), state=tk.DISABLED
+        )
+        self.btn_stage5_prev.pack(side=tk.LEFT)
+        self.btn_stage5_live = ttk.Button(preview_controls, text="Live Preview", command=self._open_stage5_live_preview)
+        self.btn_stage5_live.pack(side=tk.LEFT, expand=True, padx=10)
+        self.btn_stage5_next = ttk.Button(
+            preview_controls, text="Next", command=lambda: self._step_stage5_live_point(1), state=tk.DISABLED
+        )
+        self.btn_stage5_next.pack(side=tk.RIGHT)
+        self.stage5_live_point_var = tk.StringVar(value="Open Live Preview to inspect an observation point.")
+        ttk.Label(preview_frame, textvariable=self.stage5_live_point_var, anchor=tk.CENTER).pack(
+            side=tk.TOP, fill=tk.X, pady=(7, 0)
+        )
 
         # --- Advanced Settings ---
         self.btn_stage5_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage5_advanced)
@@ -2949,8 +3117,17 @@ class SpkrScannerApp(tk.Tk):
             state_var=self.stage5_vars['manual_ir_capture_padding']
         )
 
+        # Any setting that changes preview pressure should refresh an open window.
+        for var_key in [
+            'frd_db_offset', 'apply_mic_cal', 'mic_cal_file', 'mic_cal_mode',
+            'obs_mode', 'mic_cal_fade_octaves', 'use_optimized_origins',
+            'manual_ir_capture_padding', 'ir_capture_padding_samples',
+        ]:
+            self.stage5_vars[var_key].trace_add('write', self._schedule_stage5_live_preview)
+
+        self._invalidate_stage5_tof_distance()
         self.btn_stage5_run = ttk.Button(main_container, text="Run Stage 5", command=self._action_run_stage5)
-        self.btn_stage5_run.pack(side=tk.TOP, pady=20)
+        self.btn_stage5_run.pack(side=tk.TOP, pady=(10, 20))
         
     def _toggle_stage5_advanced(self):
         if self.stage5_adv_frame.winfo_ismapped():
@@ -3031,109 +3208,198 @@ class SpkrScannerApp(tk.Tk):
         def close_and_update():
             sync_table()
             top.destroy()
+            self._invalidate_stage5_tof_distance()
             self._schedule_update_stage5_preview()
             
         ttk.Button(frame, text="Close", command=close_and_update).pack(side=tk.BOTTOM, pady=5)
 
     def _schedule_update_stage5_preview(self, *args):
+        if args and hasattr(self, 'stage5_tof_distance_var'):
+            self._invalidate_stage5_tof_distance()
         if self.stage5_update_job:
             self.after_cancel(self.stage5_update_job)
-        self.stage5_update_job = self.after(300, self._update_stage5_preview)
+        self.stage5_update_job = self.after(100, self._update_stage5_preview)
+        self._schedule_stage5_live_preview()
+
+    def _invalidate_stage5_tof_distance(self):
+        mode = self.stage5_vars.get('subtract_tof')
+        mode = mode.get() if mode is not None else "Off"
+        if mode == "Ref Origin":
+            try:
+                geometry = self._stage5_evaluation_geometry()
+                reference_index = geometry['reference_index']
+                if self.stage5_vars['manual_list_mode'].get():
+                    distance = geometry['reference_distance']
+                else:
+                    import numpy as np
+
+                    reference_mic = geometry['final_xyz'][reference_index]
+                    reference_origin = np.asarray(geometry['offset_xyz'], dtype=float)
+                    distance = float(np.linalg.norm(reference_mic - reference_origin))
+                self.stage5_tof_distance_var.set(f"TOF distance: {distance:.4f} m")
+            except (KeyError, TypeError, ValueError):
+                self.stage5_tof_distance_var.set("TOF distance: unavailable")
+        elif mode in ("Min Phase Ref", "IR Peak"):
+            self.stage5_tof_distance_var.set("TOF distance: open Live Preview to calculate")
+        else:
+            self.stage5_tof_distance_var.set("")
+
+    def _jog_stage5_offset(self, var_key, direction):
+        try:
+            step = float(self.stage5_vars['offset_step_mm'].get())
+            current = float(self.stage5_vars[var_key].get())
+            updated = current + float(direction) * step
+            self.stage5_vars[var_key].set(f"{updated:.3f}")
+            self._schedule_update_stage5_preview()
+        except (KeyError, TypeError, ValueError):
+            self.bell()
+        return "break"
+
+    def _stage5_evaluation_geometry(self):
+        import math
+        import numpy as np
+
+        offset_xyz = np.asarray(self._stage5_offset_m(), dtype=float)
+        zero_theta = float(self.stage5_vars['zero_theta_deg'].get())
+        zero_phi = float(self.stage5_vars['zero_phi_deg'].get())
+        distance = float(self.stage5_vars['dist_mic'].get())
+        manual_mode = self.stage5_vars['manual_list_mode'].get()
+        base_spherical = []
+        base_xyz = []
+
+        if manual_mode:
+            for row in getattr(self, 'stage5_manual_coords', []):
+                theta, phi = float(row[0]), float(row[1])
+                radius = float(row[2]) if len(row) > 2 else distance
+                th_rad, ph_rad = math.radians(theta), math.radians(phi)
+                xyz = np.array([
+                    radius * math.sin(th_rad) * math.cos(ph_rad),
+                    radius * math.sin(th_rad) * math.sin(ph_rad),
+                    radius * math.cos(th_rad),
+                ])
+                base_spherical.append((theta, phi, radius))
+                base_xyz.append(xyz)
+        else:
+            th_rad = math.radians(zero_theta)
+            ph_rad = math.radians(zero_phi)
+            forward = np.array([math.sin(th_rad) * math.cos(ph_rad), math.sin(th_rad) * math.sin(ph_rad), math.cos(th_rad)])
+            right = np.array([-math.sin(ph_rad), math.cos(ph_rad), 0.0])
+            up = np.cross(forward, right)
+            rotation = np.array([forward, right, up]).T
+
+            candidate_xyz = []
+            if self.stage5_vars['cta_mode'].get():
+                for angle in range(0, 360, 10):
+                    rad = math.radians(angle)
+                    candidate_xyz.append(rotation @ np.array([distance * math.cos(rad), distance * math.sin(rad), 0.0]))
+                for angle in range(0, 360, 10):
+                    rad = math.radians(angle)
+                    candidate_xyz.append(rotation @ np.array([distance * math.cos(rad), 0.0, distance * math.sin(rad)]))
+            else:
+                sweep_range = int(self.stage5_vars['range_deg'].get())
+                increment = int(self.stage5_vars['increment_deg'].get())
+                if increment <= 0:
+                    raise ValueError("Stage 5 increment must be greater than zero.")
+                direction = self.stage5_vars['direction'].get().lower()
+                # Number/navigate the preview clockwise from on-axis. The bulk
+                # exporter can retain its centre-out calculation order without
+                # making Previous/Next alternate between the two sides.
+                from stage5_pressure_utils import preview_sweep_sequence
+                for arc, angle in preview_sweep_sequence(sweep_range, increment, direction):
+                    rad = math.radians(angle)
+                    if arc == "horizontal":
+                        candidate_xyz.append(rotation @ np.array([distance * math.cos(rad), distance * math.sin(rad), 0.0]))
+                    else:
+                        candidate_xyz.append(rotation @ np.array([distance * math.cos(rad), 0.0, distance * math.sin(rad)]))
+
+            # The two arcs share both their front and rear crossings. Compare
+            # Cartesian positions because spherical +180/-180 representations
+            # can describe the same rear point with different angle pairs.
+            from stage5_pressure_utils import unique_cartesian_points
+            for xyz in unique_cartesian_points(candidate_xyz):
+                radius = float(np.linalg.norm(xyz))
+                theta = math.degrees(math.acos(np.clip(xyz[2] / max(radius, 1e-12), -1.0, 1.0)))
+                phi = math.degrees(math.atan2(xyz[1], xyz[0]))
+                rounded_theta_deg = round(theta, 2)
+                rounded_phi_deg = round(phi, 2)
+                base_spherical.append((rounded_theta_deg, rounded_phi_deg, radius))
+                rounded_theta = math.radians(rounded_theta_deg)
+                rounded_phi = math.radians(rounded_phi_deg)
+                base_xyz.append(np.array([
+                    radius * math.sin(rounded_theta) * math.cos(rounded_phi),
+                    radius * math.sin(rounded_theta) * math.sin(rounded_phi),
+                    radius * math.cos(rounded_theta),
+                ]))
+
+        if not base_xyz:
+            raise ValueError("No Stage 5 observation points are configured.")
+
+        base_xyz = np.asarray(base_xyz, dtype=float)
+        final_xyz = base_xyz.copy() if manual_mode else base_xyz + offset_xyz
+        final_spherical = []
+        for x, y, z in final_xyz:
+            radius = math.sqrt(x * x + y * y + z * z)
+            theta = math.degrees(math.acos(np.clip(z / max(radius, 1e-12), -1.0, 1.0)))
+            phi = math.degrees(math.atan2(y, x))
+            final_spherical.append((theta, phi, radius))
+
+        if manual_mode:
+            reference_index = int(np.argmin([point[2] for point in base_spherical]))
+        else:
+            target = base_xyz[0] * 0.0
+            target[:] = distance * np.array([
+                math.sin(math.radians(zero_theta)) * math.cos(math.radians(zero_phi)),
+                math.sin(math.radians(zero_theta)) * math.sin(math.radians(zero_phi)),
+                math.cos(math.radians(zero_theta)),
+            ])
+            reference_index = int(np.argmin(np.linalg.norm(base_xyz - target, axis=1)))
+
+        return {
+            'base_spherical': base_spherical,
+            'final_spherical': final_spherical,
+            'final_xyz': final_xyz,
+            'reference_index': reference_index,
+            'reference_distance': float(np.min([point[2] for point in base_spherical])),
+            'offset_xyz': tuple(offset_xyz),
+            'zero_theta': zero_theta,
+            'zero_phi': zero_phi,
+        }
 
     def _update_stage5_preview(self):
         if self.stage5_viewer is None:
             return
         try:
-            import math
-            import numpy as np
-            
             box_dims, box_center, box_vertices = self._get_project_baffle_box_m()
-            offset_xyz = self._stage5_offset_m()
-            z_th = float(self.stage5_vars['zero_theta_deg'].get())
-            z_ph = float(self.stage5_vars['zero_phi_deg'].get())
-
-            mic_xyz = []
-            r = float(self.stage5_vars['dist_mic'].get())
-
-            if self.stage5_vars['manual_list_mode'].get():
-                # In manual mode, coordinates are absolute spherical. No offsets or rotations are applied.
-                for row in getattr(self, 'stage5_manual_coords', []):
-                    try:
-                        th, ph, r_man = float(row[0]), float(row[1]), float(row[2])
-                        th_rad, ph_rad = math.radians(th), math.radians(ph)
-                        x = r_man * math.sin(th_rad) * math.cos(ph_rad)
-                        y = r_man * math.sin(th_rad) * math.sin(ph_rad)
-                        z = r_man * math.cos(th_rad)
-                        mic_xyz.append(np.array([x, y, z]))
-                    except: pass
-
-            elif self.stage5_vars['cta_mode'].get():
-                # CTA-2034 Mode: Implement correct 3D rotation
-                th_rad = math.radians(z_th)
-                ph_rad = math.radians(z_ph)
-
-                # Define the local coordinate system basis vectors
-                F = np.array([math.sin(th_rad) * math.cos(ph_rad), math.sin(th_rad) * math.sin(ph_rad), math.cos(th_rad)])
-                R = np.array([-math.sin(ph_rad), math.cos(ph_rad), 0])
-                U = np.cross(F, R)
-                rot_matrix = np.array([F, R, U]).T
-
-                # Generate standard CTA-2034 points in a local frame and rotate them
-                for ang_deg in range(0, 360, 10):
-                    # Horizontal orbit (local XY plane)
-                    p_local_hor = np.array([r * math.cos(math.radians(ang_deg)), r * math.sin(math.radians(ang_deg)), 0])
-                    mic_xyz.append(rot_matrix @ p_local_hor)
-
-                    # Vertical orbit (local XZ plane)
-                    p_local_ver = np.array([r * math.cos(math.radians(ang_deg)), 0, r * math.sin(math.radians(ang_deg))])
-                    mic_xyz.append(rot_matrix @ p_local_ver)
-
+            metadata_mode = self.main_notebook.index(self.main_notebook.select()) == 0
+            if metadata_mode:
+                # At project-open time this is a geometry/metadata preview only.
+                # Stage 5 evaluation points and its reference axis are not relevant yet.
+                mic_coords = None
+                active_index = None
+                ref_origin = (0.0, 0.0, 0.0)
+                zero_theta = 90.0
+                zero_phi = 0.0
             else:
-                # Arc Sweep Mode: Implement correct 3D rotation
-                th_rad = math.radians(z_th)
-                ph_rad = math.radians(z_ph)
+                geometry = self._stage5_evaluation_geometry()
+                mic_coords = geometry['final_xyz']
+                active_index = self.stage5_live_point_index if self.stage5_live_window is not None else None
+                ref_origin = geometry['offset_xyz']
+                zero_theta = geometry['zero_theta']
+                zero_phi = geometry['zero_phi']
+            named_points = self._get_project_named_points_m()
+            stage2_origin = self._get_stage2_acoustic_origin_point()
+            if stage2_origin is not None:
+                named_points.append(stage2_origin)
 
-                # Define the local coordinate system basis vectors robustly to avoid gimbal lock
-                # Forward vector (local X')
-                F = np.array([math.sin(th_rad) * math.cos(ph_rad), math.sin(th_rad) * math.sin(ph_rad), math.cos(th_rad)])
-                
-                # Right vector (local Y')
-                R = np.array([-math.sin(ph_rad), math.cos(ph_rad), 0])
-
-                # Up vector (local Z'), derived from the other two to ensure a right-handed system
-                U = np.cross(F, R)
-                rot_matrix = np.array([F, R, U]).T
-
-                rng = int(self.stage5_vars['range_deg'].get())
-                inc = int(self.stage5_vars['increment_deg'].get())
-                direction = self.stage5_vars['direction'].get()
-                angles = range(-rng, rng + 1, inc) if inc > 0 else []
-
-                for ang_deg in angles:
-                    ang_rad = math.radians(ang_deg)
-                    if direction in ["horizontal", "hor_vert"]:
-                        p_local = np.array([r * math.cos(ang_rad), r * math.sin(ang_rad), 0])
-                        mic_xyz.append(rot_matrix @ p_local)
-                    if direction in ["vertical", "hor_vert"]:
-                        if direction == "hor_vert" and ang_deg == 0: continue
-                        p_local = np.array([r * math.cos(ang_rad), 0, r * math.sin(ang_rad)])
-                        mic_xyz.append(rot_matrix @ p_local)
-
-            final_mic_xyz = []
-            if mic_xyz:
-                if not self.stage5_vars['manual_list_mode'].get():
-                    offset_vec = np.array(offset_xyz)
-                    final_mic_xyz = [pt + offset_vec for pt in mic_xyz]
-                else:
-                    final_mic_xyz = mic_xyz
-            
             self.stage5_viewer.update_view(
                 box_dims=box_dims, 
-                mic_coords_xyz=final_mic_xyz, 
-                ref_origin=offset_xyz, # The axis lines still originate from the offset
-                zero_theta_deg=z_th, 
-                zero_phi_deg=z_ph,
-                named_points_xyz=self._get_project_named_points_m(),
+                mic_coords_xyz=mic_coords,
+                active_mic_index=active_index,
+                ref_origin=ref_origin,
+                zero_theta_deg=zero_theta,
+                zero_phi_deg=zero_phi,
+                show_reference_axis=not metadata_mode,
+                named_points_xyz=named_points,
                 z_center=self._get_project_z_center_m(),
                 box_center=box_center,
                 box_vertices=box_vertices
@@ -3143,6 +3409,549 @@ class SpkrScannerApp(tk.Tk):
             pass # Silence float conversion errors from empty fields
         except Exception as e:
             messagebox.showerror("Preview Error", f"Could not generate preview:\n{str(e)}")
+
+    def _open_stage5_live_preview(self):
+        if self.stage5_live_window is not None:
+            try:
+                self.stage5_live_window.deiconify()
+                self.stage5_live_window.lift()
+                self.stage5_live_window.focus_force()
+                return
+            except tk.TclError:
+                self.stage5_live_window = None
+
+        try:
+            initial_request = self._collect_stage5_live_request()
+            self._ensure_stage5_live_evaluator(initial_request['she_input'])
+        except Exception as exc:
+            messagebox.showerror("Live Preview", f"Could not open Live Preview:\n{exc}")
+            return
+
+        window = tk.Toplevel(self)
+        window.title("Stage 5 Live Preview")
+        window.geometry("900x800")
+        window.minsize(650, 600)
+        window.transient(self)
+        window.protocol("WM_DELETE_WINDOW", self._close_stage5_live_preview)
+        self.stage5_live_window = window
+        self.btn_stage5_prev.config(state=tk.NORMAL)
+        self.btn_stage5_next.config(state=tk.NORMAL)
+
+        preview_toolbar = ttk.Frame(window, padding=(6, 4))
+        preview_toolbar.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(preview_toolbar, text="FR/phase smoothing:").pack(side=tk.LEFT)
+        self.stage5_live_smoothing_var = tk.StringVar(value="Off")
+        smoothing_combo = ttk.Combobox(
+            preview_toolbar,
+            textvariable=self.stage5_live_smoothing_var,
+            values=("Off", "1/3", "1/6", "1/12", "1/24", "1/48"),
+            state="readonly",
+            width=7,
+        )
+        smoothing_combo.pack(side=tk.LEFT, padx=(5, 0))
+        smoothing_combo.bind("<<ComboboxSelected>>", self._redraw_stage5_live_cached)
+        ttk.Label(
+            preview_toolbar,
+            text="Left drag: zoom   Right drag: pan   Double-click: reset",
+            font=("Arial", 8, "italic"),
+        ).pack(side=tk.RIGHT)
+
+        self.stage5_live_figure, (
+            self.stage5_live_mag_ax,
+            self.stage5_live_phase_ax,
+            self.stage5_live_ir_ax,
+        ) = plt.subplots(3, 1, figsize=(9, 7), gridspec_kw={'height_ratios': (2.0, 1.5, 1.5)})
+        self.stage5_live_figure.subplots_adjust(left=0.10, right=0.97, top=0.96, bottom=0.08, hspace=0.28)
+        plot_host = ttk.Frame(window)
+        plot_host.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.stage5_live_canvas = FigureCanvasTkAgg(self.stage5_live_figure, master=plot_host)
+        self.stage5_live_canvas.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._connect_stage5_live_plot_interactions()
+        self.stage5_live_status_var = tk.StringVar(value="Preparing preview…")
+        ttk.Label(window, textvariable=self.stage5_live_status_var, relief=tk.SUNKEN, anchor=tk.W, padding=(5, 2)).pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.stage5_live_point_index = 0
+        self.stage5_live_last_result = None
+        self.stage5_live_plot_limits = {"magnitude": None, "phase": None, "ir": None}
+        self.stage5_live_plot_drag = None
+        self._update_stage5_preview()
+        self._schedule_stage5_live_preview(immediate=True)
+        self.after(50, self._poll_stage5_live_results)
+
+    def _ensure_stage5_live_evaluator(self, coefficient_path):
+        resolved_path = os.path.abspath(coefficient_path)
+        if self.stage5_live_evaluator is not None and self.stage5_live_evaluator_path == resolved_path:
+            return self.stage5_live_evaluator
+
+        old_evaluator = self.stage5_live_evaluator
+        self.stage5_live_evaluator = None
+        self.stage5_live_evaluator_path = None
+        self.stage5_live_last_result = None
+        self.stage5_live_plot_limits = {}
+        self.stage5_live_plot_drag = None
+        if old_evaluator is not None:
+            old_evaluator.close()
+
+        from extract_pressures_core import PressureEvaluationSession
+
+        evaluator = PressureEvaluationSession(resolved_path, use_process_pool=True)
+        self.stage5_live_evaluator = evaluator
+        self.stage5_live_evaluator_path = resolved_path
+        return evaluator
+
+    def _raise_stage5_live_with_main(self, event=None):
+        """Keep the owned preview with the application when Windows activates it."""
+        if event is not None and event.widget is not self:
+            return
+        window = self.stage5_live_window
+        if window is None:
+            return
+        try:
+            if window.state() != "withdrawn":
+                self.after_idle(window.lift)
+        except tk.TclError:
+            self.stage5_live_window = None
+
+    def _close_stage5_live_preview(self, wait_for_pool=False):
+        self.stage5_live_generation += 1
+        if self.stage5_live_update_job is not None:
+            try:
+                self.after_cancel(self.stage5_live_update_job)
+            except Exception:
+                pass
+            self.stage5_live_update_job = None
+        window = self.stage5_live_window
+        self.stage5_live_window = None
+        evaluator = self.stage5_live_evaluator
+        self.stage5_live_evaluator = None
+        self.stage5_live_evaluator_path = None
+        self.stage5_live_last_result = None
+        self.stage5_live_plot_limits = {}
+        self.stage5_live_plot_drag = None
+        if evaluator is not None:
+            if wait_for_pool:
+                evaluator.close()
+            else:
+                threading.Thread(
+                    target=evaluator.close,
+                    daemon=True,
+                    name="stage5-preview-pool-close",
+                ).start()
+        if hasattr(self, 'btn_stage5_prev'):
+            self.btn_stage5_prev.config(state=tk.DISABLED)
+            self.btn_stage5_next.config(state=tk.DISABLED)
+        if hasattr(self, 'stage5_live_point_var'):
+            self.stage5_live_point_var.set("Open Live Preview to inspect an observation point.")
+        if hasattr(self, 'stage5_live_figure'):
+            plt.close(self.stage5_live_figure)
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+        self._schedule_update_stage5_preview()
+
+    def _redraw_stage5_live_cached(self, _event=None):
+        if self.stage5_live_window is not None and self.stage5_live_last_result is not None:
+            self._draw_stage5_live_result(self.stage5_live_last_result)
+
+    def _stage5_live_plot_axis(self, plot_name):
+        return {
+            "magnitude": self.stage5_live_mag_ax,
+            "phase": self.stage5_live_phase_ax,
+            "ir": self.stage5_live_ir_ax,
+        }[plot_name]
+
+    def _stage5_live_plot_name(self, axis):
+        for plot_name in ("magnitude", "phase", "ir"):
+            if axis is self._stage5_live_plot_axis(plot_name):
+                return plot_name
+        return None
+
+    def _connect_stage5_live_plot_interactions(self):
+        canvas = self.stage5_live_canvas
+        canvas.mpl_connect("button_press_event", self._on_stage5_live_plot_press)
+        canvas.mpl_connect("motion_notify_event", self._on_stage5_live_plot_motion)
+        canvas.mpl_connect("button_release_event", self._on_stage5_live_plot_release)
+
+    def _set_stage5_live_plot_limits(self, plot_name, x_limits, y_limits):
+        """Apply limits, linking the magnitude/phase frequency axes."""
+        axis = self._stage5_live_plot_axis(plot_name)
+        axis.set_xlim(*x_limits)
+        axis.set_ylim(*y_limits)
+        self.stage5_live_plot_limits[plot_name] = (x_limits, y_limits)
+
+        if plot_name in ("magnitude", "phase"):
+            linked_name = "phase" if plot_name == "magnitude" else "magnitude"
+            linked_axis = self._stage5_live_plot_axis(linked_name)
+            linked_axis.set_xlim(*x_limits)
+            linked_limits = self.stage5_live_plot_limits.get(linked_name)
+            linked_y_limits = linked_limits[1] if linked_limits is not None else linked_axis.get_ylim()
+            self.stage5_live_plot_limits[linked_name] = (x_limits, linked_y_limits)
+
+    def _on_stage5_live_plot_press(self, event):
+        plot_name = self._stage5_live_plot_name(event.inaxes)
+        if plot_name is None or event.xdata is None or event.ydata is None:
+            return
+
+        if event.dblclick:
+            self.stage5_live_plot_drag = None
+            self._reset_stage5_live_plot_zoom(plot_name)
+            return
+
+        if event.button == 1:
+            from matplotlib.patches import Rectangle
+
+            rectangle = Rectangle(
+                (event.xdata, event.ydata), 0.0, 0.0,
+                facecolor="#1f77b4", edgecolor="#1f77b4",
+                linewidth=0.8, alpha=0.18,
+            )
+            event.inaxes.add_patch(rectangle)
+            self.stage5_live_plot_drag = {
+                "mode": "zoom",
+                "plot_name": plot_name,
+                "axis": event.inaxes,
+                "start": (event.xdata, event.ydata),
+                "start_pixel": (event.x, event.y),
+                "rectangle": rectangle,
+            }
+            self.stage5_live_canvas.draw_idle()
+        elif event.button == 3:
+            self.stage5_live_plot_drag = {
+                "mode": "pan",
+                "plot_name": plot_name,
+                "axis": event.inaxes,
+                "start": (event.xdata, event.ydata),
+                "start_pixel": (event.x, event.y),
+                "xlim": event.inaxes.get_xlim(),
+                "ylim": event.inaxes.get_ylim(),
+            }
+
+    def _on_stage5_live_plot_motion(self, event):
+        drag = self.stage5_live_plot_drag
+        if drag is None or event.x is None or event.y is None:
+            return
+
+        axis = drag["axis"]
+        start_x, start_y = drag["start"]
+        if drag["mode"] == "zoom":
+            # Continue a selection outside the axes in the conventional way:
+            # pin the moving corner to the nearest visible plot boundary.
+            clamped_x = min(max(event.x, axis.bbox.x0), axis.bbox.x1)
+            clamped_y = min(max(event.y, axis.bbox.y0), axis.bbox.y1)
+            current_x, current_y = axis.transData.inverted().transform((clamped_x, clamped_y))
+            rectangle = drag["rectangle"]
+            rectangle.set_x(min(start_x, current_x))
+            rectangle.set_y(min(start_y, current_y))
+            rectangle.set_width(abs(current_x - start_x))
+            rectangle.set_height(abs(current_y - start_y))
+        else:
+            delta_x_pixels = event.x - drag["start_pixel"][0]
+            delta_y_pixels = event.y - drag["start_pixel"][1]
+            if axis.get_xscale() == "log":
+                import math
+
+                log_limits = tuple(math.log(value) for value in drag["xlim"])
+                shift = delta_x_pixels / axis.bbox.width * (log_limits[1] - log_limits[0])
+                x_limits = tuple(math.exp(value - shift) for value in log_limits)
+            else:
+                shift = delta_x_pixels / axis.bbox.width * (drag["xlim"][1] - drag["xlim"][0])
+                x_limits = tuple(value - shift for value in drag["xlim"])
+            y_shift = delta_y_pixels / axis.bbox.height * (drag["ylim"][1] - drag["ylim"][0])
+            y_limits = tuple(value - y_shift for value in drag["ylim"])
+            self._set_stage5_live_plot_limits(drag["plot_name"], x_limits, y_limits)
+        self.stage5_live_canvas.draw_idle()
+
+    def _on_stage5_live_plot_release(self, event):
+        drag = self.stage5_live_plot_drag
+        self.stage5_live_plot_drag = None
+        if drag is None:
+            return
+
+        axis = drag["axis"]
+        if drag["mode"] == "zoom":
+            rectangle = drag["rectangle"]
+            try:
+                rectangle.remove()
+            except ValueError:
+                pass
+            if event.x is not None and event.y is not None:
+                clamped_x = min(max(event.x, axis.bbox.x0), axis.bbox.x1)
+                clamped_y = min(max(event.y, axis.bbox.y0), axis.bbox.y1)
+                current_x, current_y = axis.transData.inverted().transform((clamped_x, clamped_y))
+                pixel_distance = (
+                    abs(clamped_x - drag["start_pixel"][0])
+                    + abs(clamped_y - drag["start_pixel"][1])
+                )
+                start_x, start_y = drag["start"]
+                x_limits = tuple(sorted((start_x, current_x)))
+                y_limits = tuple(sorted((start_y, current_y)))
+                if pixel_distance >= 6 and x_limits[0] != x_limits[1] and y_limits[0] != y_limits[1]:
+                    if axis.get_xscale() != "log" or x_limits[0] > 0.0:
+                        self._set_stage5_live_plot_limits(drag["plot_name"], x_limits, y_limits)
+        else:
+            self._set_stage5_live_plot_limits(
+                drag["plot_name"], axis.get_xlim(), axis.get_ylim()
+            )
+        self.stage5_live_canvas.draw_idle()
+
+    def _reset_stage5_live_plot_zoom(self, plot_name):
+        if self.stage5_live_window is None:
+            return
+        linked_name = None
+        linked_y_limits = None
+        if plot_name in ("magnitude", "phase"):
+            linked_name = "phase" if plot_name == "magnitude" else "magnitude"
+            linked_y_limits = self._stage5_live_plot_axis(linked_name).get_ylim()
+            self.stage5_live_plot_limits[linked_name] = None
+        self.stage5_live_plot_limits[plot_name] = None
+        self._redraw_stage5_live_cached()
+        if linked_name is not None:
+            axis = self._stage5_live_plot_axis(plot_name)
+            linked_axis = self._stage5_live_plot_axis(linked_name)
+            shared_x_limits = axis.get_xlim()
+            linked_axis.set_xlim(*shared_x_limits)
+            linked_axis.set_ylim(*linked_y_limits)
+            self.stage5_live_plot_limits[plot_name] = (shared_x_limits, axis.get_ylim())
+            self.stage5_live_plot_limits[linked_name] = (shared_x_limits, linked_y_limits)
+            self.stage5_live_canvas.draw_idle()
+
+    def _step_stage5_live_point(self, delta):
+        try:
+            count = len(self._stage5_evaluation_geometry()['final_spherical'])
+        except Exception:
+            self.bell()
+            return
+        self.stage5_live_point_index = (self.stage5_live_point_index + int(delta)) % count
+        self._update_stage5_preview()
+        self._schedule_stage5_live_preview(immediate=True)
+
+    def _schedule_stage5_live_preview(self, *trace_args, immediate=False):
+        # StringVar/BooleanVar traces supply (variable_name, index, operation).
+        # Accept and ignore those values while retaining the keyword used by
+        # direct callers that need an immediate refresh.
+        if trace_args and hasattr(self, 'stage5_tof_distance_var'):
+            self._invalidate_stage5_tof_distance()
+        if self.stage5_live_window is None:
+            return
+        self.stage5_live_generation += 1
+        if self.stage5_live_update_job is not None:
+            try:
+                self.after_cancel(self.stage5_live_update_job)
+            except Exception:
+                pass
+        delay = 0 if immediate else 100
+        self.stage5_live_update_job = self.after(delay, self._start_stage5_live_calculation)
+
+    def _resolve_stage5_preview_cal_file(self):
+        if not self.stage5_vars['apply_mic_cal'].get():
+            return None
+        configured = self.stage5_vars['mic_cal_file'].get().strip()
+        if not configured:
+            raise ValueError("Microphone calibration is enabled but no calibration file is selected.")
+        resolved = configured if os.path.isabs(configured) else os.path.join(self.project_dir.get(), configured)
+        if not os.path.exists(resolved):
+            raise FileNotFoundError(f"Microphone calibration file not found: {resolved}")
+        return resolved
+
+    def _collect_stage5_live_request(self):
+        geometry = self._stage5_evaluation_geometry()
+        count = len(geometry['final_spherical'])
+        self.stage5_live_point_index %= count
+        project_dir = self.project_dir.get()
+        project_name = self.project_name.get()
+        coeff_path = os.path.join(project_dir, "outputs", "coefficients", f"{project_name}_coefficients.h5")
+        if not os.path.exists(coeff_path):
+            raise FileNotFoundError(f"Coefficient file not found: {coeff_path}")
+        manual_padding = self.stage5_vars['manual_ir_capture_padding'].get()
+        padding = int(self.stage5_vars['ir_capture_padding_samples'].get()) if manual_padding else None
+        if padding is not None and padding < 0:
+            raise ValueError("IR Capture Padding Samples must be zero or greater.")
+        index = self.stage5_live_point_index
+        xyz = geometry['final_xyz'][index]
+        reference_index = geometry['reference_index']
+        return {
+            'coord_sph': geometry['final_spherical'][index],
+            'reference_coord_sph': geometry['final_spherical'][reference_index],
+            'reference_distance': geometry['reference_distance'],
+            'cartesian': tuple(float(value) for value in xyz),
+            'point_index': index,
+            'point_count': count,
+            'she_input': coeff_path,
+            'obs_mode': self.stage5_vars['obs_mode'].get(),
+            'use_optimized_origins': self.stage5_vars['use_optimized_origins'].get(),
+            'ir_capture_padding_samples': padding,
+            'subtract_tof': self.stage5_vars['subtract_tof'].get(),
+            'apply_mic_cal': self.stage5_vars['apply_mic_cal'].get(),
+            'mic_cal_file': self._resolve_stage5_preview_cal_file(),
+            'mic_cal_mode': self.stage5_vars['mic_cal_mode'].get(),
+            'mic_cal_fade_octaves': float(self.stage5_vars['mic_cal_fade_octaves'].get()),
+            'frd_db_offset': float(self.stage5_vars['frd_db_offset'].get()),
+        }
+
+    def _start_stage5_live_calculation(self):
+        self.stage5_live_update_job = None
+        if self.stage5_live_window is None:
+            return
+        if self.stage5_live_running:
+            return
+        generation = self.stage5_live_generation
+        try:
+            request = self._collect_stage5_live_request()
+            evaluator = self._ensure_stage5_live_evaluator(request['she_input'])
+        except Exception as exc:
+            self.stage5_live_status_var.set(f"Preview unavailable: {exc}")
+            return
+        x, y, z = request['cartesian']
+        self.stage5_live_point_var.set(
+            f"Point {request['point_index'] + 1} of {request['point_count']}   "
+            f"X {x:.4f} m   Y {y:.4f} m   Z {z:.4f} m"
+        )
+        self.stage5_live_status_var.set("Calculating full-resolution preview…")
+        if request['subtract_tof'] in ("Min Phase Ref", "IR Peak"):
+            self.stage5_tof_distance_var.set("TOF distance: calculating…")
+        self.stage5_live_running = True
+
+        def worker():
+            try:
+                if evaluator is None:
+                    raise RuntimeError("The live preview evaluation pool is not available.")
+                result = evaluator.evaluate_preview_response(**{
+                    key: value for key, value in request.items()
+                    if key not in ('cartesian', 'point_index', 'point_count', 'she_input')
+                })
+                self.stage5_live_queue.put((generation, result, None))
+            except Exception as exc:
+                self.stage5_live_queue.put((generation, None, exc))
+
+        threading.Thread(target=worker, daemon=True, name="stage5-live-preview").start()
+
+    def _poll_stage5_live_results(self):
+        if self.stage5_live_window is None:
+            return
+        newest = None
+        try:
+            while True:
+                newest = self.stage5_live_queue.get_nowait()
+        except queue.Empty:
+            pass
+        if newest is not None:
+            generation, result, error = newest
+            self.stage5_live_running = False
+            if generation == self.stage5_live_generation:
+                if error is not None:
+                    self.stage5_live_status_var.set(f"Preview failed: {error}")
+                    mode = self.stage5_vars['subtract_tof'].get()
+                    if mode in ("Min Phase Ref", "IR Peak"):
+                        self.stage5_tof_distance_var.set("TOF distance: unavailable")
+                else:
+                    self._draw_stage5_live_result(result)
+            else:
+                self._schedule_stage5_live_preview(immediate=True)
+        self.after(50, self._poll_stage5_live_results)
+
+    def _draw_stage5_live_result(self, result):
+        import matplotlib.ticker as ticker
+        import numpy as np
+
+        self.stage5_live_last_result = result
+        freqs = result['freqs']
+        magnitude = np.asarray(result['magnitude'], dtype=float)
+        phase = np.asarray(result['phase'], dtype=float)
+        smoothing_label = self.stage5_live_smoothing_var.get()
+        if smoothing_label != "Off":
+            from stage5_pressure_utils import smooth_fractional_octave_response
+
+            denominator = int(smoothing_label.split("/", 1)[1])
+            magnitude, phase = smooth_fractional_octave_response(
+                freqs, result['complex'], denominator
+            )
+            magnitude += float(result.get('frd_db_offset', 0.0))
+
+        mag_ax = self.stage5_live_mag_ax
+        phase_ax = self.stage5_live_phase_ax
+        ir_ax = self.stage5_live_ir_ax
+        # clear() resets limits to (0, 1). Switch each frequency axis back to
+        # linear first so Matplotlib does not reject that temporary range.
+        mag_ax.set_xscale('linear')
+        phase_ax.set_xscale('linear')
+        mag_ax.clear()
+        phase_ax.clear()
+        ir_ax.clear()
+        mag_ax.semilogx(freqs, magnitude, color='#1f77b4', linewidth=1.4)
+        phase_ax.semilogx(freqs, phase, color='#d62728', linewidth=1.1)
+        mag_ax.set_ylabel("Magnitude (dB)")
+        phase_ax.set_ylabel("Phase (deg)")
+        phase_ax.set_xlabel("Frequency (Hz)")
+        phase_ax.set_ylim(-180.0, 180.0)
+        phase_ax.set_yticks((-180, -90, 0, 90, 180))
+        audio_ticks = [20, 30, 40, 50, 60, 80, 100, 200, 300, 400, 500, 600, 800,
+                       1000, 2000, 3000, 4000, 5000, 6000, 8000, 10000, 20000]
+        visible_ticks = [tick for tick in audio_ticks if freqs[0] <= tick <= freqs[-1]]
+        for axis in (mag_ax, phase_ax):
+            axis.set_xlim(freqs[0], freqs[-1])
+            axis.set_xscale('log')
+            axis.set_xticks(visible_ticks)
+            axis.xaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
+            axis.grid(True, which='major', alpha=0.35)
+            axis.grid(True, which='minor', alpha=0.12)
+        phase_ax.xaxis.set_major_formatter(ticker.FuncFormatter(
+            lambda value, _pos: f"{value / 1000:g}k" if value >= 1000 else f"{value:g}"
+        ))
+        mag_ax.tick_params(labelbottom=False)
+
+        ir = np.asarray(result['ir'], dtype=float)
+        ir_times_ms = np.asarray(result['ir_times_s'], dtype=float) * 1000.0
+        ir_peak = float(np.max(np.abs(ir))) if ir.size else 0.0
+        ir_display = ir / ir_peak if ir_peak > 0.0 else ir
+        ir_ax.plot(ir_times_ms, ir_display, color='#2ca02c', linewidth=1.0)
+        ir_ax.axhline(0.0, color='black', linewidth=0.6, alpha=0.4)
+        ir_ax.set_ylabel("IR (normalized)")
+        ir_ax.set_xlabel("Time (ms)")
+        ir_ax.grid(True, alpha=0.25)
+        ir_ax.set_title("Selected-point IR (before physical TOF subtraction)", fontsize=9)
+
+        reference_time = result.get('tof_reference_time_s')
+        reference_time_ms = None if reference_time is None else float(reference_time) * 1000.0
+        if reference_time_ms is not None:
+            ir_ax.axvline(
+                reference_time_ms,
+                color='#d62728',
+                linestyle='--',
+                linewidth=1.4,
+                label=f"FRD t=0 from on-axis {result.get('tof_mode', 'reference')} ({reference_time_ms:.3f} ms)",
+            )
+            ir_ax.legend(loc='upper right', fontsize='small', frameon=False)
+
+        if ir_times_ms.size:
+            selected_peak_ms = float(ir_times_ms[int(np.argmax(np.abs(ir)))]) if ir.size else 0.0
+            display_end_ms = max(20.0, selected_peak_ms + 10.0)
+            if reference_time_ms is not None:
+                display_end_ms = max(display_end_ms, reference_time_ms + 10.0)
+            ir_ax.set_xlim(0.0, min(float(ir_times_ms[-1]), display_end_ms))
+
+        for plot_name, axis in (("magnitude", mag_ax), ("phase", phase_ax), ("ir", ir_ax)):
+            saved_limits = self.stage5_live_plot_limits.get(plot_name)
+            if saved_limits is None:
+                self.stage5_live_plot_limits[plot_name] = (axis.get_xlim(), axis.get_ylim())
+            else:
+                axis.set_xlim(*saved_limits[0])
+                axis.set_ylim(*saved_limits[1])
+
+        self.stage5_live_canvas.draw_idle()
+        bin_count = len(freqs)
+        distance = result.get('tof_reference_distance')
+        tof_mode = result.get('tof_mode')
+        if tof_mode in ("Ref Origin", "Min Phase Ref", "IR Peak") and distance is not None:
+            self.stage5_tof_distance_var.set(f"TOF distance: {distance:.4f} m")
+        else:
+            self.stage5_tof_distance_var.set("")
+        suffix = f"; TOF reference {distance:.4f} m" if distance is not None else ""
+        smooth_suffix = "" if smoothing_label == "Off" else f"; {smoothing_label}-oct smoothing"
+        self.stage5_live_status_var.set(
+            f"Ready — {bin_count} full-resolution frequency bins{smooth_suffix}{suffix}"
+        )
 
     def _action_run_stage5(self):
         if DEBUG_MODE:

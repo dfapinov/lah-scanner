@@ -10,3 +10,4 @@ pandas           # CSV and table-style data manipulation
 soundfile        # Read/write WAV files via libsndfile backend
 matplotlib       # Graphs, plots, and optional 3D visualisation (mpl_toolkits)
 h5py             # Read/write .h5 coefficient data
+pytest           # Regression test runner
