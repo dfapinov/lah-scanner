@@ -92,6 +92,46 @@ Evaluates the 3D sound field at your chosen coordinates (e.g., 1m on-axis, arc s
 
 ---
 
+# Windows Installer & Automated Releases
+
+A standalone Windows installer can be produced so end users can run HALS without
+installing Python. Dependencies are declared in `pyproject.toml` (mirrored by
+`requirements.txt`), and the packaging assets live in the `packaging/` folder.
+
+### Build the installer locally
+
+1. Install the build tooling:
+   ```bash
+   pip install ".[build]"
+   ```
+2. Bundle the application with PyInstaller (one-directory build under `dist/HALS_Post`):
+   ```bash
+   pyinstaller packaging/hals_post.spec --noconfirm
+   ```
+3. Compile the installer with [Inno Setup](https://jrsoftware.org/isdl.php) (ISCC):
+   ```bash
+   ISCC "/DMyAppVersion=2.3.0" packaging\hals_installer.iss
+   ```
+   The signed-free installer is written to `installer\HALS_Post_Setup_<version>.exe`.
+
+### Automated GitHub Releases
+
+The workflow `.github/workflows/release.yml` runs on any pushed version tag
+(`v*`). It builds the PyInstaller bundle, compiles the Inno Setup installer, and
+publishes the installer to the repository **Releases** page automatically.
+
+To cut a release:
+
+```bash
+git tag v2.3.0
+git push origin v2.3.0
+```
+
+The tag version is injected into both the installer filename and its metadata,
+and auto-generated release notes are attached.
+
+---
+
 ## License & Attribution
 
 This project is open for educational and hobbyist use.  

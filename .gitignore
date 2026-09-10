@@ -4,3 +4,11 @@ __pycache__/
 .tmp_pytest/
 .tmp_uv_cache/
 origins_cache*.pkl
+
+# Packaging / build outputs (PyInstaller + Inno Setup)
+build/
+build_pyi/
+dist/
+installer/
+*.spec.bak
+*.egg-info/
