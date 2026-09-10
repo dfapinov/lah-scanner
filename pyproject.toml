@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hals-post"
+version = "2.3.0"
+description = "Holographic Acoustic Loudspeaker Scanner (HALS) - post-processing pipeline and GUI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Dm17ri F4pp1n0v" }]
+keywords = ["acoustics", "loudspeaker", "spherical-harmonics", "holography", "dsp"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Intended Audience :: Science/Research",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+]
+
+# Runtime dependencies (single source of truth).
+# requirements.txt is kept for the classic `pip install -r requirements.txt`
+# workflow and mirrors this list.
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "soundfile",
+    "matplotlib",
+    "h5py",
+]
+
+[project.optional-dependencies]
+# Testing / development tooling.
+dev = [
+    "pytest",
+]
+# Everything needed to produce the standalone Windows build.
+build = [
+    "pyinstaller>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/dfapinov/lah-scanner"
+Repository = "https://github.com/dfapinov/lah-scanner"
+Changelog = "https://github.com/dfapinov/lah-scanner/blob/main/CHANGELOG.md"
+
+# The application is distributed as a standalone Windows installer (see the
+# `packaging/` folder) rather than as an importable wheel. The source tree uses
+# a flat, sys.path-based module layout, so package auto-discovery is disabled
+# here to keep `pip install .` (metadata + dependencies) working reliably.
+[tool.setuptools]
+py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Make the flat source modules importable during tests without manual sys.path
+# manipulation, mirroring the runtime layout used by the GUI.
+pythonpath = ["src", "src/process", "src/misc", "src/grid"]
