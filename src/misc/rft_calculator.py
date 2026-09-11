@@ -8,10 +8,33 @@ for common octave resolutions.
 """
 
 import math
+import os
+import sys
 from pathlib import Path
 import re
 import tkinter as tk
 from tkinter import ttk
+
+
+def _resolve_speaker_svg():
+    """Locate ``speaker.svg`` for both source runs and frozen (PyInstaller) builds.
+
+    When frozen, PyInstaller extracts bundled data files under ``sys._MEIPASS``
+    (the bundle root for a one-directory build). When running from source the
+    asset lives in the repository ``images`` directory.
+    """
+    candidates = []
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
+        candidates.append(base / "images" / "speaker.svg")
+        candidates.append(base / "speaker.svg")
+    here = Path(__file__).resolve()
+    candidates.append(here.parents[2] / "images" / "speaker.svg")
+    candidates.append(here.parent / "images" / "speaker.svg")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 COMMON_OCTAVE_RESOLUTIONS = (3, 6, 12, 24)
@@ -213,8 +236,14 @@ class RFTCalculatorWindow:
 
     def _draw_speaker(self, canvas, x, y):
         if self.speaker_paths is None:
-            svg_path = Path(__file__).resolve().parents[2] / "images" / "speaker.svg"
-            self.speaker_paths = self._load_svg_paths(svg_path)
+            svg_path = _resolve_speaker_svg()
+            try:
+                self.speaker_paths = self._load_svg_paths(svg_path)
+            except (OSError, FileNotFoundError):
+                # The speaker glyph is purely decorative; if the asset cannot be
+                # found (e.g. missing from the bundle) fall back to no drawing
+                # rather than crashing the calculator window.
+                self.speaker_paths = []
 
         scale = 0.16
         for path_points in self.speaker_paths:

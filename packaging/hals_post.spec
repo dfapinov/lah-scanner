@@ -21,6 +21,7 @@ PROJECT_ROOT = os.path.dirname(SPECPATH)
 SRC = os.path.join(PROJECT_ROOT, "src")
 PROCESS = os.path.join(SRC, "process")
 MISC = os.path.join(SRC, "misc")
+IMAGES = os.path.join(PROJECT_ROOT, "images")
 
 # The GUI resolves its resources relative to the module directory, which maps to
 # the bundle root once frozen, so ship them at the top level of the bundle.
@@ -28,6 +29,9 @@ datas = [
     (os.path.join(SRC, "splash.png"), "."),
     (os.path.join(SRC, "HALS_icon.ico"), "."),
     (os.path.join(SRC, "HALS_icon.png"), "."),
+    # The RFT calculator draws a speaker glyph loaded from this SVG. Ship it in
+    # an "images" subfolder so it resolves via sys._MEIPASS when frozen.
+    (os.path.join(IMAGES, "speaker.svg"), "images"),
 ]
 binaries = []
 
