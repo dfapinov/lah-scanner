@@ -290,6 +290,13 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_live_last_result = None
         self.stage5_live_plot_limits = {}
         self.stage5_live_plot_drag = None
+        self.stage5_plane_window = None
+        self.stage5_plane_job = None
+        self.stage5_plane_generation = 0
+        self.stage5_plane_running = False
+        self.stage5_plane_queue = queue.Queue()
+        self.stage5_plane_result = None
+        self.stage5_plane_freq_index = 0
 
         self._build_ui()
         self.bind("<FocusIn>", self._raise_stage5_live_with_main, add="+")
@@ -1887,7 +1894,7 @@ class SpkrScannerApp(tk.Tk):
     def _stage_run_buttons(self):
         names = (
             'btn_stage1_run', 'btn_stage2_run', 'btn_stage3_run',
-            'btn_stage4_run', 'btn_stage5_live', 'btn_stage5_run'
+            'btn_stage4_run', 'btn_stage5_live', 'btn_stage5_plane', 'btn_stage5_run'
         )
         return [getattr(self, name) for name in names if hasattr(self, name)]
 
@@ -1907,6 +1914,8 @@ class SpkrScannerApp(tk.Tk):
         # stage for the same CPU cores.
         if self.stage5_live_window is not None:
             self._close_stage5_live_preview(wait_for_pool=True)
+        if self.stage5_plane_window is not None:
+            self._close_stage5_field_plane(wait_for_pool=True)
 
         self.active_stage_job = stage_name
         self._set_stage_run_buttons(tk.DISABLED)
@@ -3078,6 +3087,16 @@ class SpkrScannerApp(tk.Tk):
         ttk.Label(preview_frame, textvariable=self.stage5_live_point_var, anchor=tk.CENTER).pack(
             side=tk.TOP, fill=tk.X, pady=(7, 0)
         )
+        self.btn_stage5_plane = ttk.Button(
+            preview_frame, text="Field Plane (pcolor)", command=self._open_stage5_field_plane
+        )
+        self.btn_stage5_plane.pack(side=tk.TOP, pady=(7, 0))
+        ttk.Label(
+            preview_frame,
+            text="Field Plane: one frequency across an X/Y/Z plane of points.",
+            font=("Arial", 8, "italic"),
+            anchor=tk.CENTER,
+        ).pack(side=tk.TOP, fill=tk.X)
 
         # --- Advanced Settings ---
         self.btn_stage5_advanced = ttk.Button(main_container, text="Show Advanced Settings", command=self._toggle_stage5_advanced)
@@ -3499,6 +3518,36 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_live_evaluator_path = resolved_path
         return evaluator
 
+    def _release_stage5_evaluator(self, wait_for_pool=False):
+        """Shut the shared preview pool down once no preview window needs it.
+
+        The Live Preview and the Field Plane share one evaluation session, so
+        closing one window must not take the pool away from the other.
+        """
+        if self.stage5_live_window is not None or self.stage5_plane_window is not None:
+            return
+        evaluator = self.stage5_live_evaluator
+        self.stage5_live_evaluator = None
+        self.stage5_live_evaluator_path = None
+        if evaluator is None:
+            return
+        if wait_for_pool:
+            evaluator.close()
+        else:
+            threading.Thread(
+                target=evaluator.close,
+                daemon=True,
+                name="stage5-preview-pool-close",
+            ).start()
+
+    def _stage5_coefficient_path(self):
+        project_dir = self.project_dir.get()
+        project_name = self.project_name.get()
+        coeff_path = os.path.join(project_dir, "outputs", "coefficients", f"{project_name}_coefficients.h5")
+        if not os.path.exists(coeff_path):
+            raise FileNotFoundError(f"Coefficient file not found: {coeff_path}")
+        return coeff_path
+
     def _raise_stage5_live_with_main(self, event=None):
         """Keep the owned preview with the application when Windows activates it."""
         if event is not None and event.widget is not self:
@@ -3522,21 +3571,10 @@ class SpkrScannerApp(tk.Tk):
             self.stage5_live_update_job = None
         window = self.stage5_live_window
         self.stage5_live_window = None
-        evaluator = self.stage5_live_evaluator
-        self.stage5_live_evaluator = None
-        self.stage5_live_evaluator_path = None
         self.stage5_live_last_result = None
         self.stage5_live_plot_limits = {}
         self.stage5_live_plot_drag = None
-        if evaluator is not None:
-            if wait_for_pool:
-                evaluator.close()
-            else:
-                threading.Thread(
-                    target=evaluator.close,
-                    daemon=True,
-                    name="stage5-preview-pool-close",
-                ).start()
+        self._release_stage5_evaluator(wait_for_pool=wait_for_pool)
         if hasattr(self, 'btn_stage5_prev'):
             self.btn_stage5_prev.config(state=tk.DISABLED)
             self.btn_stage5_next.config(state=tk.DISABLED)
@@ -3759,11 +3797,7 @@ class SpkrScannerApp(tk.Tk):
         geometry = self._stage5_evaluation_geometry()
         count = len(geometry['final_spherical'])
         self.stage5_live_point_index %= count
-        project_dir = self.project_dir.get()
-        project_name = self.project_name.get()
-        coeff_path = os.path.join(project_dir, "outputs", "coefficients", f"{project_name}_coefficients.h5")
-        if not os.path.exists(coeff_path):
-            raise FileNotFoundError(f"Coefficient file not found: {coeff_path}")
+        coeff_path = self._stage5_coefficient_path()
         manual_padding = self.stage5_vars['manual_ir_capture_padding'].get()
         padding = int(self.stage5_vars['ir_capture_padding_samples'].get()) if manual_padding else None
         if padding is not None and padding < 0:
@@ -3951,6 +3985,525 @@ class SpkrScannerApp(tk.Tk):
         smooth_suffix = "" if smoothing_label == "Off" else f"; {smoothing_label}-oct smoothing"
         self.stage5_live_status_var.set(
             f"Ready — {bin_count} full-resolution frequency bins{smooth_suffix}{suffix}"
+        )
+
+    def _stage5_plane_default_span(self):
+        try:
+            distance = float(self.stage5_vars['dist_mic'].get())
+        except (TypeError, ValueError):
+            distance = 1.0
+        return max(0.2, 2.0 * abs(distance))
+
+    def _open_stage5_field_plane(self):
+        if self.stage5_plane_window is not None:
+            try:
+                self.stage5_plane_window.deiconify()
+                self.stage5_plane_window.lift()
+                self.stage5_plane_window.focus_force()
+                return
+            except tk.TclError:
+                self.stage5_plane_window = None
+
+        try:
+            coeff_path = self._stage5_coefficient_path()
+            self._ensure_stage5_live_evaluator(coeff_path)
+        except Exception as exc:
+            messagebox.showerror("Field Plane", f"Could not open the Field Plane view:\n{exc}")
+            return
+
+        window = tk.Toplevel(self)
+        window.title("Stage 5 Field Plane")
+        window.geometry("1000x860")
+        window.minsize(760, 640)
+        window.transient(self)
+        window.protocol("WM_DELETE_WINDOW", self._close_stage5_field_plane)
+        self.stage5_plane_window = window
+        self.stage5_plane_result = None
+        self.stage5_plane_freq_index = 0
+
+        span = self._stage5_plane_default_span()
+        self.stage5_plane_vars = {
+            'plane': tk.StringVar(value="XY"),
+            'offset_m': tk.StringVar(value="0.000"),
+            'offset_step_m': tk.StringVar(value="0.050"),
+            'span_h_m': tk.StringVar(value=f"{span:.3f}"),
+            'span_v_m': tk.StringVar(value=f"{span:.3f}"),
+            'center_h_m': tk.StringVar(value="0.000"),
+            'center_v_m': tk.StringVar(value="0.000"),
+            'nodes': tk.StringVar(value="41"),
+            'freq_resolution': tk.StringVar(value="1/6"),
+            'display_mode': tk.StringVar(value="Normalized (dB)"),
+            'dynamic_range_db': tk.StringVar(value="40"),
+            'show_contours': tk.BooleanVar(value=True),
+            'colormap': tk.StringVar(value="turbo"),
+        }
+
+        self._build_stage5_plane_controls(window)
+        self._build_stage5_plane_canvas(window)
+        self.stage5_plane_status_var = tk.StringVar(value="Preparing field plane…")
+        ttk.Label(
+            window, textvariable=self.stage5_plane_status_var, relief=tk.SUNKEN, anchor=tk.W, padding=(5, 2)
+        ).pack(side=tk.BOTTOM, fill=tk.X)
+
+        self._bind_stage5_plane_keys(window)
+        self._schedule_stage5_plane_update(immediate=True)
+        self.after(50, self._poll_stage5_plane_results)
+
+    def _close_stage5_field_plane(self, wait_for_pool=False):
+        self.stage5_plane_generation += 1
+        if self.stage5_plane_job is not None:
+            try:
+                self.after_cancel(self.stage5_plane_job)
+            except Exception:
+                pass
+            self.stage5_plane_job = None
+        window = self.stage5_plane_window
+        self.stage5_plane_window = None
+        self.stage5_plane_result = None
+        self._release_stage5_evaluator(wait_for_pool=wait_for_pool)
+        if hasattr(self, 'stage5_plane_figure'):
+            plt.close(self.stage5_plane_figure)
+            del self.stage5_plane_figure
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def _build_stage5_plane_controls(self, window):
+        from stage5_field_plane import DISPLAY_MODES, PLANE_NAMES
+
+        controls = ttk.LabelFrame(window, text="Plane", padding=(8, 6))
+        controls.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 0))
+        for column in range(8):
+            controls.columnconfigure(column, weight=1 if column % 2 else 0)
+
+        ttk.Label(controls, text="Plane:").grid(row=0, column=0, sticky=tk.W, padx=(0, 4), pady=2)
+        plane_combo = ttk.Combobox(
+            controls, textvariable=self.stage5_plane_vars['plane'],
+            values=PLANE_NAMES, state="readonly", width=5,
+        )
+        plane_combo.grid(row=0, column=1, sticky=tk.W, pady=2)
+        plane_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_stage5_plane_changed())
+
+        self.stage5_plane_offset_label = ttk.Label(controls, text="Z position (m):")
+        self.stage5_plane_offset_label.grid(row=0, column=2, sticky=tk.E, padx=(8, 4), pady=2)
+        offset_entry = ttk.Entry(controls, textvariable=self.stage5_plane_vars['offset_m'], width=9)
+        offset_entry.grid(row=0, column=3, sticky=tk.W, pady=2)
+        offset_entry.bind("<Return>", lambda _event: self._schedule_stage5_plane_update(immediate=True))
+        offset_entry.bind("<FocusOut>", lambda _event: self._schedule_stage5_plane_update())
+        ttk.Button(controls, text="-", width=3, command=lambda: self._step_stage5_plane_offset(-1)).grid(
+            row=0, column=4, sticky=tk.W, pady=2
+        )
+        ttk.Button(controls, text="+", width=3, command=lambda: self._step_stage5_plane_offset(1)).grid(
+            row=0, column=5, sticky=tk.W, pady=2
+        )
+        ttk.Label(controls, text="Step (m):").grid(row=0, column=6, sticky=tk.E, padx=(8, 4), pady=2)
+        ttk.Entry(controls, textvariable=self.stage5_plane_vars['offset_step_m'], width=8).grid(
+            row=0, column=7, sticky=tk.W, pady=2
+        )
+
+        ttk.Label(controls, text="Span H (m):").grid(row=1, column=0, sticky=tk.W, padx=(0, 4), pady=2)
+        ttk.Entry(controls, textvariable=self.stage5_plane_vars['span_h_m'], width=9).grid(
+            row=1, column=1, sticky=tk.W, pady=2
+        )
+        ttk.Label(controls, text="Span V (m):").grid(row=1, column=2, sticky=tk.E, padx=(8, 4), pady=2)
+        ttk.Entry(controls, textvariable=self.stage5_plane_vars['span_v_m'], width=9).grid(
+            row=1, column=3, sticky=tk.W, pady=2
+        )
+        ttk.Label(controls, text="Centre H (m):").grid(row=1, column=4, sticky=tk.E, padx=(8, 4), pady=2)
+        ttk.Entry(controls, textvariable=self.stage5_plane_vars['center_h_m'], width=9).grid(
+            row=1, column=5, sticky=tk.W, pady=2
+        )
+        ttk.Label(controls, text="Centre V (m):").grid(row=1, column=6, sticky=tk.E, padx=(8, 4), pady=2)
+        ttk.Entry(controls, textvariable=self.stage5_plane_vars['center_v_m'], width=9).grid(
+            row=1, column=7, sticky=tk.W, pady=2
+        )
+
+        ttk.Label(controls, text="Nodes/axis:").grid(row=2, column=0, sticky=tk.W, padx=(0, 4), pady=2)
+        nodes_combo = ttk.Combobox(
+            controls, textvariable=self.stage5_plane_vars['nodes'],
+            values=("21", "31", "41", "61", "81", "101"), state="readonly", width=6,
+        )
+        nodes_combo.grid(row=2, column=1, sticky=tk.W, pady=2)
+        nodes_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_stage5_plane_update(immediate=True))
+
+        ttk.Label(controls, text="Freq. steps:").grid(row=2, column=2, sticky=tk.E, padx=(8, 4), pady=2)
+        freq_combo = ttk.Combobox(
+            controls, textvariable=self.stage5_plane_vars['freq_resolution'],
+            values=("1/1", "1/3", "1/6", "1/12", "1/24", "Full"), state="readonly", width=6,
+        )
+        freq_combo.grid(row=2, column=3, sticky=tk.W, pady=2)
+        freq_combo.bind("<<ComboboxSelected>>", lambda _event: self._schedule_stage5_plane_update(immediate=True))
+
+        ttk.Button(controls, text="Recalculate", command=lambda: self._schedule_stage5_plane_update(immediate=True)).grid(
+            row=2, column=4, columnspan=2, sticky=tk.W, padx=(8, 0), pady=2
+        )
+        ttk.Label(
+            controls,
+            text="Arrow keys / wheel: frequency   Shift+wheel, PgUp/PgDn: move plane",
+            font=("Arial", 8, "italic"),
+        ).grid(row=2, column=6, columnspan=2, sticky=tk.E, pady=2)
+
+        display = ttk.LabelFrame(window, text="Display", padding=(8, 6))
+        display.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 0))
+        ttk.Label(display, text="Quantity:").pack(side=tk.LEFT)
+        mode_combo = ttk.Combobox(
+            display, textvariable=self.stage5_plane_vars['display_mode'],
+            values=DISPLAY_MODES, state="readonly", width=16,
+        )
+        mode_combo.pack(side=tk.LEFT, padx=(4, 12))
+        mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_stage5_plane())
+        ttk.Label(display, text="Dynamic range (dB):").pack(side=tk.LEFT)
+        range_entry = ttk.Entry(display, textvariable=self.stage5_plane_vars['dynamic_range_db'], width=6)
+        range_entry.pack(side=tk.LEFT, padx=(4, 12))
+        range_entry.bind("<Return>", lambda _event: self._draw_stage5_plane())
+        range_entry.bind("<FocusOut>", lambda _event: self._draw_stage5_plane())
+        ttk.Label(display, text="Colormap:").pack(side=tk.LEFT)
+        cmap_combo = ttk.Combobox(
+            display, textvariable=self.stage5_plane_vars['colormap'],
+            values=("turbo", "viridis", "inferno", "jet", "coolwarm"), state="readonly", width=9,
+        )
+        cmap_combo.pack(side=tk.LEFT, padx=(4, 12))
+        cmap_combo.bind("<<ComboboxSelected>>", lambda _event: self._draw_stage5_plane())
+        ttk.Checkbutton(
+            display, text="Isobar contours", variable=self.stage5_plane_vars['show_contours'],
+            command=self._draw_stage5_plane,
+        ).pack(side=tk.LEFT)
+
+        frequency = ttk.LabelFrame(window, text="Frequency", padding=(8, 6))
+        frequency.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 0))
+        ttk.Button(frequency, text="◀", width=3, command=lambda: self._step_stage5_plane_frequency(-1)).pack(side=tk.LEFT)
+        self.stage5_plane_freq_scale = ttk.Scale(
+            frequency, from_=0, to=1, orient=tk.HORIZONTAL, command=self._on_stage5_plane_freq_scale
+        )
+        self.stage5_plane_freq_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        ttk.Button(frequency, text="▶", width=3, command=lambda: self._step_stage5_plane_frequency(1)).pack(side=tk.LEFT)
+        self.stage5_plane_freq_var = tk.StringVar(value="—")
+        ttk.Label(frequency, textvariable=self.stage5_plane_freq_var, width=14, anchor=tk.E).pack(side=tk.LEFT)
+
+    def _build_stage5_plane_canvas(self, window):
+        self.stage5_plane_figure, (self.stage5_plane_ax, self.stage5_plane_cax) = plt.subplots(
+            1, 2, figsize=(8.5, 6.5), gridspec_kw={'width_ratios': (24, 1)}
+        )
+        self.stage5_plane_figure.subplots_adjust(left=0.09, right=0.92, top=0.94, bottom=0.09, wspace=0.08)
+        host = ttk.Frame(window)
+        host.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.stage5_plane_canvas = FigureCanvasTkAgg(self.stage5_plane_figure, master=host)
+        self.stage5_plane_canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.stage5_plane_canvas.mpl_connect("scroll_event", self._on_stage5_plane_scroll)
+
+    def _bind_stage5_plane_keys(self, window):
+        window.bind("<Left>", lambda _event: self._step_stage5_plane_frequency(-1))
+        window.bind("<Right>", lambda _event: self._step_stage5_plane_frequency(1))
+        window.bind("<Down>", lambda _event: self._step_stage5_plane_frequency(-1))
+        window.bind("<Up>", lambda _event: self._step_stage5_plane_frequency(1))
+        window.bind("<Prior>", lambda _event: self._step_stage5_plane_offset(1))
+        window.bind("<Next>", lambda _event: self._step_stage5_plane_offset(-1))
+        window.focus_set()
+
+    def _on_stage5_plane_changed(self):
+        """Re-label the offset control for the newly selected plane normal."""
+        from stage5_field_plane import plane_axis_labels
+
+        _h_label, _v_label, n_label = plane_axis_labels(self.stage5_plane_vars['plane'].get())
+        self.stage5_plane_offset_label.config(text=f"{n_label} position (m):")
+        self._schedule_stage5_plane_update(immediate=True)
+
+    def _on_stage5_plane_scroll(self, event):
+        if event.key == "shift":
+            self._step_stage5_plane_offset(1 if event.button == "up" else -1)
+        else:
+            self._step_stage5_plane_frequency(1 if event.button == "up" else -1)
+
+    def _step_stage5_plane_offset(self, direction):
+        if self.stage5_plane_window is None:
+            return "break"
+        try:
+            step = float(self.stage5_plane_vars['offset_step_m'].get())
+            current = float(self.stage5_plane_vars['offset_m'].get())
+        except (TypeError, ValueError):
+            self.bell()
+            return "break"
+        self.stage5_plane_vars['offset_m'].set(f"{current + float(direction) * step:.4f}")
+        self._schedule_stage5_plane_update(immediate=True)
+        return "break"
+
+    def _step_stage5_plane_frequency(self, delta):
+        import numpy as np
+
+        result = self.stage5_plane_result
+        if self.stage5_plane_window is None or result is None:
+            return "break"
+        count = len(result['freqs'])
+        self.stage5_plane_freq_index = int(np.clip(self.stage5_plane_freq_index + int(delta), 0, count - 1))
+        self._draw_stage5_plane()
+        return "break"
+
+    def _on_stage5_plane_freq_scale(self, value):
+        import numpy as np
+
+        if getattr(self, '_stage5_plane_syncing', False):
+            return
+        result = self.stage5_plane_result
+        if self.stage5_plane_window is None or result is None:
+            return
+        index = int(round(float(value)))
+        if index == self.stage5_plane_freq_index:
+            return
+        self.stage5_plane_freq_index = int(np.clip(index, 0, len(result['freqs']) - 1))
+        self._draw_stage5_plane()
+
+    def _schedule_stage5_plane_update(self, immediate=False):
+        if self.stage5_plane_window is None:
+            return
+        self.stage5_plane_generation += 1
+        if self.stage5_plane_job is not None:
+            try:
+                self.after_cancel(self.stage5_plane_job)
+            except Exception:
+                pass
+        self.stage5_plane_job = self.after(0 if immediate else 250, self._start_stage5_plane_calculation)
+
+    def _collect_stage5_plane_request(self):
+        import schema
+        from stage5_field_plane import build_plane_grid, fractional_octave_frequency_indices
+
+        nodes = int(self.stage5_plane_vars['nodes'].get())
+        grid = build_plane_grid(
+            self.stage5_plane_vars['plane'].get(),
+            float(self.stage5_plane_vars['offset_m'].get()),
+            (
+                float(self.stage5_plane_vars['span_h_m'].get()),
+                float(self.stage5_plane_vars['span_v_m'].get()),
+            ),
+            (nodes, nodes),
+            center_m=self._stage5_plane_center_xyz(),
+        )
+
+        resolution = self.stage5_plane_vars['freq_resolution'].get()
+        denominator = 0 if resolution == "Full" else int(resolution.split("/", 1)[1])
+        evaluator = self.stage5_live_evaluator
+        if evaluator is None:
+            raise RuntimeError("The Stage 5 evaluation pool is not available.")
+        freq_indices = fractional_octave_frequency_indices(evaluator.data[schema.FREQS], denominator)
+
+        manual_padding = self.stage5_vars['manual_ir_capture_padding'].get()
+        padding = int(self.stage5_vars['ir_capture_padding_samples'].get()) if manual_padding else None
+        if padding is not None and padding < 0:
+            raise ValueError("IR Capture Padding Samples must be zero or greater.")
+
+        return {
+            'grid': grid,
+            'freq_indices': freq_indices,
+            'obs_mode': self.stage5_vars['obs_mode'].get(),
+            'use_optimized_origins': self.stage5_vars['use_optimized_origins'].get(),
+            'ir_capture_padding_samples': padding,
+            'apply_mic_cal': self.stage5_vars['apply_mic_cal'].get(),
+            'mic_cal_file': self._resolve_stage5_preview_cal_file(),
+            'mic_cal_mode': self.stage5_vars['mic_cal_mode'].get(),
+            'mic_cal_fade_octaves': float(self.stage5_vars['mic_cal_fade_octaves'].get()),
+            'frd_db_offset': float(self.stage5_vars['frd_db_offset'].get()),
+        }
+
+    def _stage5_plane_center_xyz(self):
+        """Map the two in-plane centre entries onto an absolute XYZ triplet."""
+        from stage5_field_plane import resolve_plane
+
+        h_axis, v_axis, _n_axis = resolve_plane(self.stage5_plane_vars['plane'].get())
+        center = [0.0, 0.0, 0.0]
+        center[h_axis] = float(self.stage5_plane_vars['center_h_m'].get())
+        center[v_axis] = float(self.stage5_plane_vars['center_v_m'].get())
+        return tuple(center)
+
+    def _start_stage5_plane_calculation(self):
+        import numpy as np
+
+        self.stage5_plane_job = None
+        if self.stage5_plane_window is None:
+            return
+        if self.stage5_plane_running:
+            return
+        generation = self.stage5_plane_generation
+        try:
+            request = self._collect_stage5_plane_request()
+            evaluator = self._ensure_stage5_live_evaluator(self._stage5_coefficient_path())
+        except Exception as exc:
+            self.stage5_plane_status_var.set(f"Field plane unavailable: {exc}")
+            return
+
+        grid = request['grid']
+        point_count = int(np.count_nonzero(grid['valid_mask']))
+        self.stage5_plane_status_var.set(
+            f"Calculating {point_count} points x {len(request['freq_indices'])} frequency steps…"
+        )
+        self.stage5_plane_running = True
+
+        def worker():
+            try:
+                field = evaluator.evaluate_field(
+                    grid['points_sph'],
+                    obs_mode=request['obs_mode'],
+                    use_optimized_origins=request['use_optimized_origins'],
+                    ir_capture_padding_samples=request['ir_capture_padding_samples'],
+                    freq_indices=request['freq_indices'],
+                )
+                pressures = np.asarray(field['complex'], dtype=np.complex128)
+                if request['apply_mic_cal']:
+                    from utils import apply_mic_calibration
+
+                    pressures = apply_mic_calibration(
+                        pressures,
+                        np.asarray(field['freqs'], dtype=float),
+                        request['mic_cal_file'],
+                        request['mic_cal_mode'],
+                        request['mic_cal_fade_octaves'],
+                    )
+                result = {
+                    'grid': grid,
+                    'freqs': np.asarray(field['freqs'], dtype=float),
+                    'complex': pressures,
+                    'frd_db_offset': request['frd_db_offset'],
+                }
+                self.stage5_plane_queue.put((generation, result, None))
+            except Exception as exc:
+                self.stage5_plane_queue.put((generation, None, exc))
+
+        threading.Thread(target=worker, daemon=True, name="stage5-field-plane").start()
+
+    def _poll_stage5_plane_results(self):
+        if self.stage5_plane_window is None:
+            return
+        newest = None
+        try:
+            while True:
+                newest = self.stage5_plane_queue.get_nowait()
+        except queue.Empty:
+            pass
+        if newest is not None:
+            generation, result, error = newest
+            self.stage5_plane_running = False
+            if generation == self.stage5_plane_generation:
+                if error is not None:
+                    self.stage5_plane_status_var.set(f"Field plane failed: {error}")
+                else:
+                    self._on_stage5_plane_result(result)
+            else:
+                self._schedule_stage5_plane_update(immediate=True)
+        self.after(50, self._poll_stage5_plane_results)
+
+    def _on_stage5_plane_result(self, result):
+        from stage5_field_plane import nearest_frequency_index
+
+        previous = self.stage5_plane_result
+        self.stage5_plane_result = result
+        count = len(result['freqs'])
+        if previous is not None and len(previous['freqs']):
+            # Keep looking at the same physical frequency when only the plane
+            # geometry or the frequency step size changed.
+            previous_hz = float(previous['freqs'][min(self.stage5_plane_freq_index, len(previous['freqs']) - 1)])
+            self.stage5_plane_freq_index = nearest_frequency_index(result['freqs'], previous_hz)
+        else:
+            self.stage5_plane_freq_index = min(self.stage5_plane_freq_index, count - 1)
+
+        self._stage5_plane_syncing = True
+        try:
+            self.stage5_plane_freq_scale.config(to=max(count - 1, 0))
+        finally:
+            self._stage5_plane_syncing = False
+        self._draw_stage5_plane()
+
+    def _draw_stage5_plane(self, _event=None):
+        import numpy as np
+
+        from stage5_field_plane import plane_color_limits, plane_display_values, scatter_to_plane
+
+        result = self.stage5_plane_result
+        if self.stage5_plane_window is None or result is None:
+            return
+
+        grid = result['grid']
+        index = int(np.clip(self.stage5_plane_freq_index, 0, len(result['freqs']) - 1))
+        self.stage5_plane_freq_index = index
+        frequency = float(result['freqs'][index])
+        mode = self.stage5_plane_vars['display_mode'].get()
+        plane_complex = scatter_to_plane(result['complex'][index, :], grid['valid_mask'], grid['shape'])
+        values = plane_display_values(plane_complex, mode, db_offset=result['frd_db_offset'])
+        try:
+            dynamic_range = float(self.stage5_plane_vars['dynamic_range_db'].get())
+        except (TypeError, ValueError):
+            dynamic_range = 40.0
+        vmin, vmax = plane_color_limits(values, mode, dynamic_range_db=dynamic_range)
+
+        axis = self.stage5_plane_ax
+        axis.clear()
+        self.stage5_plane_cax.clear()
+        mesh = axis.pcolormesh(
+            grid['h_edges'], grid['v_edges'], values,
+            cmap=self.stage5_plane_vars['colormap'].get(),
+            vmin=vmin, vmax=vmax, shading='flat',
+        )
+        if self.stage5_plane_vars['show_contours'].get() and mode in ("Level (dB)", "Normalized (dB)"):
+            # Isobars every 6 dB give the same read-across as commercial
+            # near-field scanner plots without hiding the colour map.
+            levels = np.arange(np.ceil(vmin / 6.0) * 6.0, vmax + 1e-9, 6.0)
+            if levels.size:
+                contours = axis.contour(
+                    grid['h_nodes'], grid['v_nodes'], values,
+                    levels=levels, colors='black', linewidths=0.5, alpha=0.5,
+                )
+                axis.clabel(contours, fmt="%g", fontsize=7)
+
+        axis.plot(0.0, 0.0, marker='+', color='white', markersize=10, markeredgewidth=1.6)
+        self._overlay_stage5_plane_points(axis, grid)
+        axis.set_xlabel(f"{grid['h_label']} (m)")
+        axis.set_ylabel(f"{grid['v_label']} (m)")
+        axis.set_aspect('equal')
+        axis.set_title(
+            f"{grid['plane']} plane at {grid['normal_label']} = {grid['plane_offset_m']:.3f} m   "
+            f"{frequency:.1f} Hz   {mode}",
+            fontsize=10,
+        )
+        self.stage5_plane_figure.colorbar(mesh, cax=self.stage5_plane_cax)
+        self.stage5_plane_cax.set_ylabel(mode, fontsize=9)
+        self.stage5_plane_canvas.draw_idle()
+
+        self._stage5_plane_syncing = True
+        try:
+            self.stage5_plane_freq_scale.set(index)
+        finally:
+            self._stage5_plane_syncing = False
+        self.stage5_plane_freq_var.set(f"{frequency:.1f} Hz")
+        masked = int(np.count_nonzero(~grid['valid_mask']))
+        masked_note = f"; {masked} node(s) masked near the origin" if masked else ""
+        self.stage5_plane_status_var.set(
+            f"Step {index + 1} of {len(result['freqs'])} — {frequency:.1f} Hz; "
+            f"colour range {vmin:.1f} to {vmax:.1f}{masked_note}. "
+            "Physical TOF subtraction is not applied to plane data."
+        )
+
+    def _overlay_stage5_plane_points(self, axis, grid):
+        """Mark Stage 5 observation points that intersect the displayed plane."""
+        import numpy as np
+
+        from stage5_field_plane import resolve_plane
+
+        try:
+            points = np.asarray(self._stage5_evaluation_geometry()['final_xyz'], dtype=float)
+        except Exception:
+            return
+        if points.size == 0:
+            return
+        h_axis, v_axis, n_axis = resolve_plane(grid['plane'])
+        h_step = float(grid['h_nodes'][1] - grid['h_nodes'][0])
+        v_step = float(grid['v_nodes'][1] - grid['v_nodes'][0])
+        tolerance = max(h_step, v_step)
+        near = np.abs(points[:, n_axis] - grid['plane_offset_m']) <= tolerance
+        if not np.any(near):
+            return
+        axis.scatter(
+            points[near, h_axis], points[near, v_axis],
+            s=14, facecolors='none', edgecolors='white', linewidths=1.0,
         )
 
     def _action_run_stage5(self):

@@ -42,6 +42,27 @@ For specific, non-standard evaluations, you can input a custom list of spherical
 
 ---
 
+## Interactive Inspection
+
+### Live Preview
+Live Preview evaluates a single observation point at full frequency resolution and plots its magnitude, phase, and impulse response. Previous and Next cycle through the configured observation points.
+
+### Field Plane (pcolor)
+The Field Plane view is the spatial counterpart of Live Preview: instead of all frequencies at one point, it shows one frequency across a whole plane of virtual microphones, with the sound field level mapped to colour.
+
+* **Plane selection:** Choose the **XY** (horizontal, fixed Z), **XZ** (vertical, fixed Y), or **YZ** (vertical, fixed X) plane. The position field always refers to the axis normal to the selected plane, so the plane can be moved freely through space.
+* **Moving the plane:** Type a position, use the **-**/**+** buttons with the chosen step size, press **Page Up**/**Page Down**, or hold **Shift** while scrolling the mouse wheel over the plot.
+* **Plane window:** Span H/V set the size of the evaluated rectangle, Centre H/V shift it within the plane, and Nodes/axis sets the grid density. Nodes that fall inside the expansion origin are masked, because the spherical harmonic expansion is singular there.
+* **Scrolling frequency:** The whole frequency set is evaluated in one pass, so stepping through frequencies is instant. Use the **arrow keys**, the mouse wheel, the slider, or the ◀/▶ buttons.
+* **Frequency steps:** Fractional-octave stepping (1/1 to 1/24 octave) keeps the evaluated data set small; **Full** uses every available frequency bin and is considerably slower for dense grids.
+* **Displayed quantity:** *Level (dB)* shows absolute level including the FRD dB offset, *Normalized (dB)* references every plane to its own maximum, *Phase (deg)* shows wrapped phase, and *Real part* shows the instantaneous wavefront, which makes standing waves and radiation lobes easy to see.
+* **Dynamic range and isobars:** As with commercial near-field scanners (for example Klippel's NFS), the colour scale holds a fixed dB dynamic range below the reference level so that features keep the same colour while scrolling frequencies. Optional isobar contours are drawn every 6 dB.
+* **Overlays:** A white cross marks the coordinate origin and white circles mark configured Stage 5 observation points that intersect the displayed plane.
+
+> **Note:** All Stage 5 settings (observation mode, optimized origins, capture padding, microphone calibration, dB offset) apply to the plane data. Physical TOF subtraction is not applied, so phase plots contain the true propagation delay.
+
+---
+
 ## Exporting the Data
 The script provides several ways to format and export the results.
 

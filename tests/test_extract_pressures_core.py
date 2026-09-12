@@ -164,6 +164,39 @@ def test_pressure_extractor_rejects_negative_capture_padding(she_data):
         )
 
 
+def test_frequency_subset_matches_the_same_bins_of_a_full_solve(she_data):
+    full = extract_pressures_core.evaluate_she_field(
+        COORDS, she_data, corr_ir_pad_phase=False, use_process_pool=False
+    )
+    subset = extract_pressures_core.evaluate_she_field(
+        COORDS,
+        she_data,
+        corr_ir_pad_phase=False,
+        use_process_pool=False,
+        freq_indices=[0, 2],
+    )
+
+    np.testing.assert_array_equal(subset["freqs"], she_data[schema.FREQS][[0, 2]])
+    np.testing.assert_allclose(subset["complex"], full["complex"][[0, 2], :], rtol=2e-12, atol=2e-12)
+
+
+def test_frequency_subset_rejects_out_of_range_bins(she_data):
+    with pytest.raises(ValueError, match="out-of-range"):
+        extract_pressures_core.evaluate_she_field(
+            COORDS[:1], she_data, use_process_pool=False, freq_indices=[0, 9]
+        )
+
+
+def test_session_field_evaluation_accepts_a_frequency_subset(she_data):
+    with extract_pressures_core.PressureEvaluationSession(
+        she_data, use_process_pool=False
+    ) as session:
+        subset = session.evaluate_field(COORDS, corr_ir_pad_phase=False, freq_indices=[1])
+
+    np.testing.assert_array_equal(subset["freqs"], she_data[schema.FREQS][[1]])
+    assert subset["complex"].shape == (1, len(COORDS))
+
+
 def test_h5_and_dictionary_inputs_are_equivalent(local_tmp_path, she_data):
     path = local_tmp_path / "coefficients.h5"
     with h5py.File(path, "w") as handle:

@@ -124,6 +124,7 @@ def evaluate_she_field(
     use_process_pool: bool = True,
     process_pool=None,
     show_progress: bool = True,
+    freq_indices=None,
 ) -> Dict[str, np.ndarray]:
     
     data = load_she_h5(she_input)
@@ -139,6 +140,20 @@ def evaluate_she_field(
         origins_mm = data[schema.ORIGINS_MM]
         if origins_mm is None:
             origins_mm = np.zeros((len(freqs), 3))
+
+    # Optional frequency subset. Views such as the Stage 5 field plane evaluate
+    # many spatial points at once and only need a coarse frequency grid, so the
+    # selection happens here instead of solving every stored bin.
+    if freq_indices is not None:
+        selection = np.asarray(freq_indices, dtype=int)
+        if selection.ndim != 1 or selection.size == 0:
+            raise ValueError("Frequency selection must be a non-empty 1D index array.")
+        if selection.min() < 0 or selection.max() >= len(freqs):
+            raise ValueError("Frequency selection contains out-of-range bin indices.")
+        freqs = freqs[selection]
+        coeffs = coeffs[selection]
+        n_used = n_used[selection]
+        origins_mm = origins_mm[selection]
     
     pts_sph = np.array(coords_sph, dtype=float)
     theta_in = np.radians(pts_sph[:, 0])
@@ -257,6 +272,7 @@ class PressureEvaluationSession:
         use_optimized_origins=True,
         corr_ir_pad_phase=True,
         ir_capture_padding_samples=None,
+        freq_indices=None,
     ):
         with self._lock:
             if self._closed:
@@ -272,6 +288,7 @@ class PressureEvaluationSession:
                 use_process_pool=self.use_process_pool,
                 process_pool=self._pool,
                 show_progress=False,
+                freq_indices=freq_indices,
             )
 
     def evaluate_preview_response(

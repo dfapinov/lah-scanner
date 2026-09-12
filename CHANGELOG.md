@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Stage 5 Field Plane view shows one frequency across a plane of virtual microphones as a pcolor map. The XY, XZ, and YZ planes can be selected and moved along their normal axis with entry fields, -/+ buttons, Page Up/Page Down, or Shift and the mouse wheel. Span, centre, and node density of the evaluated rectangle are user settable.
+- Field Plane frequency scrolling is instant because the whole selected frequency set is evaluated in one pass. Frequencies can be stepped with the arrow keys, the mouse wheel, the slider, or the ◀/▶ buttons, and frequency steps can be thinned to 1/1 through 1/24 octave or left at full resolution.
+- Field Plane display options cover level in dB, level normalized to the plane maximum, wrapped phase, and the instantaneous real part, with a fixed dB dynamic range, selectable colormap, and optional 6 dB isobar contours as used by commercial near-field scanners.
+- The Field Plane marks the coordinate origin and any Stage 5 observation points that intersect the displayed plane, and masks grid nodes that fall inside the singular expansion origin.
+
+### Changed
+
+- The pressure extraction core can evaluate a subset of stored frequency bins, so spatial views do not have to solve every bin.
+- Live Preview and Field Plane share one persistent evaluation pool, which is now released only after both windows are closed.
+
 ## [2.3.0] - 2026-09-03
 
 ### Added
