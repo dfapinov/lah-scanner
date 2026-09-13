@@ -2372,6 +2372,11 @@ class SpkrScannerApp(tk.Tk):
         main_settings_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
 
         self.stage3_vars['freq_end_hz'] = self._add_form_entry(main_settings_frame, "End Frequency (Hz):", "20000.0", "Upper boundary of the Stage 3 order test.")
+        self.stage3_vars['octave_resolution'] = self._add_form_entry(
+            main_settings_frame, "Octave Resolution (1/x; 0 = all bins):", "12",
+            "Test frequencies at 1/x-octave spacing: 12 = 1/12 octave, 24 = 1/24 octave. "
+            "0 tests every positive frequency bin in the range. Finer spacing takes longer. "
+            "Both the Int/Ext ratio and internal power share use these frequencies.")
         stage3_upper_range_note = ttk.Label(
             main_settings_frame,
             text=STAGE3_UPPER_RANGE_NOTE,
@@ -2430,9 +2435,12 @@ class SpkrScannerApp(tk.Tk):
                 'input_dir': input_dir,
                 'input_filename': input_filename,
                 'order_range': parse_bounds_int(self.stage3_vars['test_order_range'].get()),
+                'octave_resolution': int(self.stage3_vars['octave_resolution'].get()),
                 'freq_start_hz': float(self.stage3_vars['freq_start_hz'].get()),
                 'freq_end_hz': float(self.stage3_vars['freq_end_hz'].get()),
             }
+            if settings['octave_resolution'] < 0:
+                raise ValueError("Octave resolution must be a nonnegative integer (0 = all bins).")
         except Exception as exc:
             messagebox.showerror("Stage 3 Settings", f"Could not start Stage 3:\n{exc}")
             return
@@ -2451,6 +2459,7 @@ class SpkrScannerApp(tk.Tk):
                 input_dir_opti=settings['input_dir'],
                 input_filename_opti=settings['input_filename'],
                 test_order_range=settings['order_range'],
+                octave_resolution=settings.get('octave_resolution', 12),
                 freq_start_hz=settings['freq_start_hz'],
                 freq_end_hz=settings['freq_end_hz'],
                 test_start_db_range=(-20.0, -60.0),
@@ -2491,7 +2500,7 @@ class SpkrScannerApp(tk.Tk):
 
         top = tk.Toplevel(self)
         top.title("Stage 3 Recommended Order N")
-        top.geometry("780x680")
+        top.geometry("900x950")
         top.transient(self)
         top.grab_set()
 
@@ -2506,12 +2515,73 @@ class SpkrScannerApp(tk.Tk):
         if recommended_key not in options:
             recommended_key = "recommended" if "recommended" in options else next(iter(options.keys()))
         recommended = options[recommended_key]
+        from stage3_optimize_she_settings import (STAGE3_CHOICE_HELP, STAGE3_CHOICE_STYLES,
+                                                  stage3_order_choices, highlight_stage3_choices)
+        options = dict(options)
+        choice_var = tk.StringVar(value=next((key for key in STAGE3_CHOICE_STYLES
+                                             if key in options and options[key]['n'] == recommended['n']), recommended_key))
+        ttk.Button(frame, text="?", width=3, command=lambda: messagebox.showinfo(
+            "Stage 3: choosing an order", STAGE3_CHOICE_HELP, parent=top)).pack(anchor=tk.E)
         recommendation_note = optimizer_result.get("recommendation_note", recommended.get("reason", "")) if isinstance(optimizer_result, dict) else recommended.get("reason", "")
         sfs_rule_db = optimizer_result.get("sfs_ratio_rule_db", 20.0) if isinstance(optimizer_result, dict) else 20.0
         orders = step1.get("orders", [])
         ratios = step1.get("ratios", [])
+        degree_power = step1.get("internal_degree_power_db")
+        tail_power = step1.get("internal_tail_power_db")
         if len(orders) > 0 and len(ratios) > 0:
-            plot_fig, ax_ratio = plt.subplots(figsize=(7.4, 3.2))
+            if tail_power is not None:
+                from stage3_optimize_she_settings import plot_internal_tail_power
+                plot_fig, (ax_ratio, ax_power) = plt.subplots(2, 1, figsize=(7.4, 5.2), sharex=True)
+                plot_internal_tail_power(ax_power, orders, tail_power, step1['tail_reference'])
+                references = step1.get('tail_by_reference', {})
+                if references:
+                    reference_frame = ttk.Frame(frame)
+                    reference_frame.pack(fill=tk.X, pady=(0, 6))
+                    ttk.Label(reference_frame, text="Tail-power reference:").pack(side=tk.LEFT)
+                    default_n = step1['tail_reference']['n']
+                    reference_choices = {}
+                    for key, ref in references.items():
+                        status = "automatic" if ref['n'] == default_n else "manual"
+                        if ref['ratio'] <= float(sfs_rule_db):
+                            status += "; below >20 dB threshold"
+                        label = f"N={ref['n']} | Int/Ext {ref['ratio']:.2f} dB | {status}"
+                        reference_choices[label] = ref
+                    default_label = next(label for label, ref in reference_choices.items() if ref['n'] == default_n)
+                    reference_var = tk.StringVar(value=default_label)
+                    reference_combo = ttk.Combobox(reference_frame, textvariable=reference_var,
+                                                   values=list(reference_choices), state="readonly", width=62)
+                    reference_combo.pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
+
+                    def change_tail_reference(event=None):
+                        selected = reference_choices[reference_var.get()]
+                        metadata = dict(selected, fallback=step1['tail_reference']['fallback'],
+                                        manual=selected['n'] != default_n)
+                        ax_power.clear()
+                        plot_internal_tail_power(ax_power, orders, selected['power_db'], metadata)
+                        updated = stage3_order_choices(orders, ratios, step1['residuals'],
+                                                      step1.get('rolloff_knee'), selected['power_db'], selected['n'])
+                        for key in STAGE3_CHOICE_STYLES:
+                            options.pop(key, None)
+                        options.update(updated)
+                        for artist in choice_artists:
+                            artist.remove()
+                        choice_artists[:] = highlight_stage3_choices(ax_ratio, options)
+                        highlight_stage3_choices(ax_power, options, tail=True)
+                        ax_ratio.legend(loc='best', fontsize=8)
+                        ax_power.legend(loc='best', fontsize=8)
+                        refresh_choices()
+                        plot_fig.tight_layout()
+                        canvas_plot.draw_idle()
+
+                    reference_combo.bind('<<ComboboxSelected>>', change_tail_reference)
+                    ttk.Label(frame, text="Reference changes update the tail plot only. The saved PNG uses the automatic reference.",
+                              wraplength=720).pack(anchor=tk.W, pady=(0, 4))
+            elif degree_power is not None:
+                from stage3_optimize_she_settings import plot_internal_degree_power
+                plot_fig, (ax_ratio, ax_power) = plt.subplots(2, 1, figsize=(7.4, 5.2), sharex=True)
+                plot_internal_degree_power(ax_power, orders, degree_power)
+            else:
+                plot_fig, ax_ratio = plt.subplots(figsize=(7.4, 3.2))
             ax_ratio.plot(orders, ratios, marker="o", linewidth=1.4, color="#4c78a8", label="Int/Ext ratio")
             ax_ratio.axhline(
                 float(sfs_rule_db),
@@ -2526,13 +2596,13 @@ class SpkrScannerApp(tk.Tk):
             ax_ratio.set_xticks(orders)
             ax_ratio.grid(True, linestyle="--", alpha=0.35)
 
-            marker_styles = {
-                recommended_key: ("#e45756", "o", "Recommended"),
-            }
+            marker_styles = STAGE3_CHOICE_STYLES if any(key in options for key in STAGE3_CHOICE_STYLES) else {
+                recommended_key: ("#e45756", "o", "Recommended")}
+            choice_artists = []
             for key, (color, marker, label) in marker_styles.items():
                 opt = options.get(key)
                 if opt and opt.get("n") is not None and opt.get("ratio") is not None:
-                    ax_ratio.scatter(
+                    choice_artists.append(ax_ratio.scatter(
                         [float(opt["n"])],
                         [float(opt["ratio"])],
                         s=95,
@@ -2542,7 +2612,11 @@ class SpkrScannerApp(tk.Tk):
                         linewidths=1.1,
                         zorder=5,
                         label=label,
-                    )
+                    ))
+
+            if tail_power is not None:
+                highlight_stage3_choices(ax_power, options, tail=True)
+                ax_power.legend(loc='best', fontsize=8)
 
             handles, labels = ax_ratio.get_legend_handles_labels()
             ax_ratio.legend(handles, labels, loc="best", fontsize=8)
@@ -2563,14 +2637,40 @@ class SpkrScannerApp(tk.Tk):
         )
         if recommended.get("warning"):
             result_text += f"\n\nWarning: {recommended['warning']}"
-        ttk.Label(frame, text=result_text, wraplength=720, justify=tk.LEFT).pack(anchor=tk.W, fill=tk.X, pady=6)
+        choice_frame = ttk.LabelFrame(frame, text="Choose the order to use in Stage 4", padding=6)
+        choice_frame.pack(fill=tk.X, pady=6)
+
+        def refresh_choices():
+            for child in choice_frame.winfo_children():
+                child.destroy()
+            if choice_var.get() not in options:
+                choice_var.set(recommended_key)
+            for key, (color, marker, label) in STAGE3_CHOICE_STYLES.items():
+                opt = options.get(key)
+                text = f"{label}: not available"
+                if opt:
+                    text = f"{label}: N={opt['n']} | Int/Ext {opt['ratio']:.2f} dB"
+                    if opt['ratio'] <= float(sfs_rule_db):
+                        text += " | below >20 dB threshold"
+                row = ttk.Frame(choice_frame)
+                row.pack(fill=tk.X)
+                ttk.Label(row, text="●", foreground=color).pack(side=tk.LEFT)
+                ttk.Radiobutton(row, text=text, variable=choice_var, value=key,
+                                state='normal' if opt else 'disabled').pack(side=tk.LEFT)
+            if not any(opt.get('n') == recommended['n'] for key, opt in options.items() if key in STAGE3_CHOICE_STYLES):
+                ttk.Radiobutton(choice_frame, text=f"Best-ratio fallback: N={recommended['n']}",
+                                variable=choice_var, value=recommended_key).pack(anchor=tk.W)
+            elif choice_var.get() == recommended_key:
+                choice_var.set(next(key for key in STAGE3_CHOICE_STYLES if key in options and options[key]['n'] == recommended['n']))
+
+        refresh_choices()
 
         note = optimizer_result.get("warning", "") if isinstance(optimizer_result, dict) else ""
         if note:
             ttk.Label(frame, text=note, foreground="orange", wraplength=720).pack(anchor=tk.W, pady=(8, 0))
 
         def send_choice():
-            opt = options[recommended_key]
+            opt = options[choice_var.get()]
             if 'target_n_max' in self.stage4_vars:
                 self.stage4_vars['target_n_max'].set(str(opt['n']))
             print(f"Sent {opt.get('label', recommended_key)} (N={opt['n']}) to Stage 4.")

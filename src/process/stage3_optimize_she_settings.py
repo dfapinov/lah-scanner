@@ -43,6 +43,83 @@ FIXED_NOISE_FLOOR_START_DB = -30.0
 FIXED_NOISE_FLOOR_MAX_DB = -40.0
 FIXED_MAX_LAMBDA = 0.000001
 SFS_ACCEPTABLE_RATIO_DB = 20.0
+STAGE3_CHOICE_STYLES = {
+    'knee': ('#e45756', 'o', 'Roll-off knee'),
+    'highest': ('#9467bd', 's', 'Highest order >20 dB'),
+    'tail': ('#f28e2b', '^', 'First tail < -20 dB'),
+}
+STAGE3_CHOICE_HELP = """Choosing an order for Stage 4
+
+Order N controls how much spatial detail the model can describe. More detail is
+useful only while the separation remains reliable.
+
+Top graph: internal/external (Int/Ext) ratio
+The internal field represents the source; the external field represents sound
+arriving from outside. In the tested frequency region, time windowing is
+responsible for removing reflections. With effective windowing, the ratio should
+therefore be large, with little energy assigned to the external field. A falling
+ratio suggests poorer separation. 20 dB is a practical rule of thumb, not a
+guarantee of accuracy or a direct measurement of numerical conditioning.
+
+Bottom graph: cumulative tail power
+This shows how much modeled internal sound power you throw away by stopping at
+each order. It combines ALL degrees above that order in the selected reference
+fit. -20 dB means 1% discarded; -30 dB means 0.1%. More negative means less lost.
+Adding a tail below -20 dB may not be worthwhile if it degrades the Int/Ext ratio.
+The reference defaults to the highest order above 20 dB. The dropdown changes
+the reference and the tail-based choice. Beyond the reference, power is unknown;
+the zero tail at the reference itself is omitted and is not a threshold crossing.
+These are frequency-averaged modeled powers: small contributions may still matter
+to directivity, and narrow-band features can be diluted by averaging.
+
+The three choices
+Roll-off knee: where the post-peak ratio starts declining more sharply. It aims
+to keep detail before separation worsens. Knee detection seems sensitive to the
+specific rate and shape of roll-off, so it may not be robust or even find a knee.
+
+Highest order above 20 dB: keeps the most detail while meeting the separation
+rule of thumb. If no tested order exceeds 20 dB, this choice is unavailable;
+the best-ratio order remains available as a fallback, with a warning.
+
+First tail below -20 dB: the lowest tested order below the reference that discards
+less than 1% of its modeled internal power. Check its Int/Ext ratio too: this
+choice does not guarantee good separation. It is unavailable if no such order
+is found before the reference.
+
+Select a choice, then click Use in Stage 4. The reference dropdown changes the
+tail diagnostic; the radio buttons choose the actual order sent to Stage 4.
+"""
+
+
+def stage3_order_choices(orders, ratios, residuals, knee, tail_db, reference_n):
+    selected = {'knee': knee['n'] if knee else None, 'highest': None, 'tail': None}
+    qualified = [n for n, r in zip(orders, ratios) if np.isfinite(r) and r > SFS_ACCEPTABLE_RATIO_DB]
+    selected['highest'] = max(qualified) if qualified else None
+    tails = [n for n, db in zip(orders, tail_db) if n < reference_n and not np.isnan(db) and db < -20]
+    selected['tail'] = min(tails) if tails else None
+    result = {}
+    for key, n in selected.items():
+        if n is None:
+            continue
+        idx = list(orders).index(n)
+        result[key] = {'n': n, 'ratio': ratios[idx], 'err': residuals[idx],
+                       'label': STAGE3_CHOICE_STYLES[key][2]}
+    return result
+
+
+def highlight_stage3_choices(ax, options, tail=False):
+    artists = []
+    for key, (color, marker, label) in STAGE3_CHOICE_STYLES.items():
+        opt = options.get(key)
+        if opt:
+            if tail:
+                artists.append(ax.axvline(opt['n'], color=color, linestyle='--', alpha=.7,
+                                          label=f"{label}: N={opt['n']}"))
+            else:
+                artists.append(ax.scatter([opt['n']], [opt['ratio']], s=150 - 30*len(artists),
+                                           color=color, marker=marker, edgecolors='white',
+                                           zorder=5+len(artists), label=f"{label}: N={opt['n']}"))
+    return artists
 
 def find_rolloff_knee(orders, ratios):
     orders = np.asarray(orders, dtype=float)
@@ -132,6 +209,9 @@ def find_rolloff_knee(orders, ratios):
     }
 
 def _stage3_recommendation_markers(options=None):
+    if options and any(key in options for key in STAGE3_CHOICE_STYLES):
+        return [(float(options[key]['n']), float(options[key]['ratio']), color, marker, label)
+                for key, (color, marker, label) in STAGE3_CHOICE_STYLES.items() if key in options]
     marker_styles = {
         "recommended": ("#e45756", "o", "Recommended"),
     }
@@ -144,7 +224,101 @@ def _stage3_recommendation_markers(options=None):
             markers.append((float(opt["n"]), float(opt["ratio"]), color, marker, label))
     return markers
 
-def save_stage3_order_sweep_plot(orders, ratios, residuals=None, options=None, knee=None, save_path=None):
+def plot_internal_degree_power(ax, orders, power_db):
+    """Shared diagnostic for the saved plot and interactive Stage 3 dialog."""
+    values = np.asarray(power_db, dtype=float)
+    # Keep exact zero power visible, with an explicit display floor.
+    displayed = np.maximum(values, -80.0)
+    ax.plot(orders, displayed, marker="o", color="#f28e2b", label="Degree N / total internal power")
+    ax.axhline(-20.0, color="#777777", linestyle="--", label="-20 dB = 1% reference")
+    ax.set_xlabel("Order N")
+    ax.set_ylabel("Internal power share (dB)")
+    ax.set_title("Mean per-frequency power share; display floor -80 dB; gaps = unavailable", fontsize=9)
+    ax.set_xticks(orders)
+    ax.grid(True, linestyle="--", alpha=0.35)
+    ax.legend(loc="best", fontsize=8)
+
+
+def calc_internal_degree_fraction(coeffs, degree):
+    """Power share of degree n in this fit, using only outgoing C coefficients.
+
+    Orthonormal Y_nm and outgoing h_n(kr) give radiated power proportional
+    to sum(abs(C_nm)**2) / k**2. At one frequency the common factors cancel.
+    This is not the difference in total power between independently refit orders.
+    Missing/truncated degrees and zero-total fits are undefined, not zero power.
+    """
+    internal = np.asarray(coeffs)[0::2]
+    if degree < 0 or internal.size < (degree + 1)**2:
+        return np.nan
+    scale = np.max(np.abs(internal))
+    if not np.isfinite(scale) or scale == 0:
+        return np.nan
+    powers = np.abs(internal / scale)**2
+    return float(np.sum(powers[degree**2:(degree + 1)**2]) / np.sum(powers))
+
+
+def aggregate_internal_degree_power(fractions):
+    """Equal frequency weighting in linear power share, then convert to dB."""
+    valid = np.asarray(fractions, dtype=float)
+    valid = valid[np.isfinite(valid)]
+    if not valid.size:
+        return np.nan, 0
+    mean = float(np.mean(valid))
+    return (10.0 * np.log10(mean) if mean > 0 else -np.inf), int(valid.size)
+
+
+def select_tail_reference(orders, ratios):
+    finite = [i for i, ratio in enumerate(ratios) if np.isfinite(ratio)]
+    if not finite:
+        raise ValueError("No finite Int/Ext ratio available for a tail-power reference.")
+    qualified = [i for i in finite if ratios[i] > SFS_ACCEPTABLE_RATIO_DB]
+    idx = max(qualified, key=lambda i: orders[i]) if qualified else max(finite, key=lambda i: ratios[i])
+    return {'n': int(orders[idx]), 'ratio': float(ratios[idx]), 'fallback': not bool(qualified)}
+
+
+def calc_internal_degree_shares(coeffs, order):
+    internal = np.asarray(coeffs)[0::2]
+    if internal.size != (order + 1)**2:
+        return None
+    scale = np.max(np.abs(internal))
+    if not np.isfinite(scale) or scale == 0:
+        return None
+    powers = np.abs(internal / scale)**2
+    return np.array([powers[n*n:(n+1)**2].sum() for n in range(order+1)]) / powers.sum()
+
+
+def calc_cumulative_tail(orders, reference_n, sample_shares):
+    valid = [s for s in sample_shares if s is not None]
+    values = []
+    for n in orders:
+        if n > reference_n or not valid:
+            values.append(np.nan)
+        else:
+            db, _ = aggregate_internal_degree_power([np.sum(s[n+1:]) for s in valid])
+            values.append(db)
+    return values, len(valid)
+
+
+def plot_internal_tail_power(ax, orders, power_db, reference):
+    displayed = np.where(np.asarray(orders) < reference['n'], np.maximum(power_db, -80.0), np.nan)
+    ax.plot(orders, displayed, marker="o", color="#f28e2b",
+            label="Power in degrees above N / reference internal power")
+    ax.axhline(-20, color="#777777", linestyle="--", label="-20 dB = 1%")
+    ax.axvline(reference['n'], color="#9467bd", linestyle=":", label=f"Reference N={reference['n']}")
+    if reference.get('manual'):
+        qualifier = "manual selection" + ("; below >20 dB threshold" if reference['ratio'] <= SFS_ACCEPTABLE_RATIO_DB else "")
+    else:
+        qualifier = "best-ratio fallback; no fit >20 dB" if reference['fallback'] else "highest order >20 dB"
+    ax.set_title(f"Reference N={reference['n']}: {reference['ratio']:.2f} dB Int/Ext ({qualifier})\n"
+                 "Mean tail fraction; tail is zero at reference (omitted); beyond reference unknown", fontsize=8)
+    ax.set_xlabel("Stopping order N")
+    ax.set_ylabel("Discarded internal power (dB)")
+    ax.set_xticks(orders)
+    ax.grid(True, linestyle="--", alpha=.35)
+    ax.legend(loc="best", fontsize=8)
+
+
+def save_stage3_order_sweep_plot(orders, ratios, residuals=None, options=None, knee=None, save_path=None, internal_degree_power_db=None, internal_tail_power_db=None, tail_reference=None):
     if not save_path:
         return None
 
@@ -158,9 +332,17 @@ def save_stage3_order_sweep_plot(orders, ratios, residuals=None, options=None, k
         orders_arr = np.asarray(orders, dtype=float)
         ratios_arr = np.asarray(ratios, dtype=float)
 
-        fig = Figure(figsize=(10, 5))
+        has_power = internal_tail_power_db is not None or internal_degree_power_db is not None
+        fig = Figure(figsize=(10, 8 if has_power else 5))
         FigureCanvasAgg(fig)
-        ax_ratio = fig.add_subplot(111)
+        ax_ratio = fig.add_subplot(211 if has_power else 111)
+        if internal_tail_power_db is not None:
+            ax_tail = fig.add_subplot(212, sharex=ax_ratio)
+            plot_internal_tail_power(ax_tail, orders_arr, internal_tail_power_db, tail_reference)
+            highlight_stage3_choices(ax_tail, options or {}, tail=True)
+            ax_tail.legend(loc='best', fontsize=8)
+        elif internal_degree_power_db is not None:
+            plot_internal_degree_power(fig.add_subplot(212, sharex=ax_ratio), orders_arr, internal_degree_power_db)
         ax_ratio.plot(orders_arr, ratios_arr, marker="o", linewidth=1.5, color="#4c78a8", label="Int/Ext ratio")
         ax_ratio.axhline(
             SFS_ACCEPTABLE_RATIO_DB,
@@ -204,16 +386,49 @@ def _worker(args):
     safe_N = min(N, N_kr)
     coeffs, metrics = _solve_one_frequency(
         f_hz=f, P_complex=Pk, coords_sph=(r_k, th_k, ph_k), order_N=safe_N,
+        k_val=2.0 * np.pi * f / c_sound,
         CONDITION_METRICS=True, noise_floor_start_db=st_db,
         noise_floor_max_db=mx_db, max_lambda=lam
     )
     ratio_db = calc_internal_external_ratio(coeffs)
     err = (metrics['residual_norm'] / max(base_norm, 1e-20)) * 100.0
-    return {'N': N, 'st_db': st_db, 'mx_db': mx_db, 'lam': lam, 'ratio_db': ratio_db, 'err': err}
+    fraction = calc_internal_degree_fraction(coeffs, N)
+    return {'N': N, 'st_db': st_db, 'mx_db': mx_db, 'lam': lam, 'ratio_db': ratio_db, 'err': err,
+            'internal_degree_fraction': fraction, 'internal_degree_shares': calc_internal_degree_shares(coeffs, N)}
 
 def _stage3_thread_workers(task_count):
     cpu_count = os.cpu_count() or 1
     return max(1, min(task_count, cpu_count))
+
+
+def select_stage3_frequency_indices(freqs, start_hz, end_hz, octave_resolution=12):
+    """Nearest available bins to 1/x-octave targets; 0 selects every bin.
+
+    Include both available range endpoints and deduplicate mapped FFT bins.
+    """
+    if not np.isfinite(octave_resolution) or octave_resolution < 0 or int(octave_resolution) != octave_resolution:
+        raise ValueError("Stage 3 octave resolution must be a nonnegative integer (0 = all bins).")
+    if not np.isfinite(start_hz) or not np.isfinite(end_hz):
+        raise ValueError("Stage 3 frequency boundaries must be finite.")
+    freqs = np.asarray(freqs, dtype=float)
+    low, high = sorted((start_hz, end_hz))
+    indices = np.flatnonzero((freqs >= low) & (freqs <= high) & (freqs > 0))
+    if not indices.size:
+        raise ValueError(f"Stage 3 frequency range {low:g}-{high:g} Hz contains no positive frequency bins.")
+    if octave_resolution == 0 or indices.size == 1:
+        return indices
+    available = freqs[indices]
+    # Stream targets to avoid a large temporary array at fine resolutions.
+    selected = {0, len(available) - 1}
+    steps = int(np.floor(np.log2(available[-1] / available[0]) * octave_resolution))
+    for step in range(1, steps + 1):
+        target = available[0] * 2.0 ** (step / octave_resolution)
+        right = min(int(np.searchsorted(available, target)), len(available) - 1)
+        left = max(0, right - 1)
+        selected.add(left if target - available[left] <= available[right] - target else right)
+        if len(selected) == len(available):
+            break
+    return indices[sorted(selected)]
 
 def run_open_branch_optimizer(
     input_dir_opti: str,
@@ -229,7 +444,8 @@ def run_open_branch_optimizer(
     speed_of_sound: float = 343.0,
     save_plot: bool = True,
     plot_save_path: str = None,
-    use_process_pool: bool = True
+    use_process_pool: bool = True,
+    octave_resolution: int = 12,
 ):
     start_time = time.time()
 
@@ -261,9 +477,9 @@ def run_open_branch_optimizer(
             f"Stage 3 frequency range {freq_start_hz:g}-{freq_end_hz:g} Hz "
             f"does not contain any frequency bins from {f_all[0]:g}-{f_all[-1]:g} Hz."
         )
-    sample_count = min(12, len(idx_target))
-    test_indices = np.unique(np.linspace(idx_target[0], idx_target[-1], sample_count, dtype=int))
-    print(f"Stage 3 order test frequency range: {freq_start_hz:g}-{freq_end_hz:g} Hz ({len(test_indices)} sample frequencies)")
+    test_indices = select_stage3_frequency_indices(f_all, freq_start_hz, freq_end_hz, octave_resolution)
+    resolution_label = "all bins" if octave_resolution == 0 else f"1/{octave_resolution}-octave"
+    print(f"Stage 3 order test frequency range: {freq_start_hz:g}-{freq_end_hz:g} Hz ({len(test_indices)} sample frequencies, {resolution_label})")
 
     def run_batch(configs):
         tasks = []
@@ -291,11 +507,19 @@ def run_open_branch_optimizer(
         agg = {}
         for r in raw_results:
             key = (r['N'], r['st_db'], r['mx_db'], r['lam'])
-            if key not in agg: agg[key] = {'ratio': [], 'err': []}
+            if key not in agg: agg[key] = {'ratio': [], 'err': [], 'degree_fraction': [], 'shares': []}
             agg[key]['ratio'].append(r['ratio_db'])
             agg[key]['err'].append(r['err'])
+            agg[key]['degree_fraction'].append(r['internal_degree_fraction'])
+            agg[key]['shares'].append(r['internal_degree_shares'])
             
-        return {k: {'ratio_db': np.mean(v['ratio']), 'err': np.mean(v['err'])} for k, v in agg.items()}
+        results = {}
+        for key, values in agg.items():
+            power_db, count = aggregate_internal_degree_power(values['degree_fraction'])
+            results[key] = {'ratio_db': np.mean(values['ratio']), 'err': np.mean(values['err']),
+                            'internal_degree_power_db': power_db, 'internal_degree_sample_count': count,
+                            'internal_degree_shares': values['shares']}
+        return results
 
     # =========================================================================
     # STEP 1: FINDING THE STABLE ORDER (Maximum Ratio Detection)
@@ -321,6 +545,8 @@ def run_open_branch_optimizer(
     ratio_vals = []
     err_vals = []
     delta_vals = []
+    degree_power_vals = []
+    degree_sample_counts = []
     prev_ratio = None
     
     for n in orders:
@@ -332,9 +558,13 @@ def run_open_branch_optimizer(
         ratio_vals.append(ratio)
         err_vals.append(data['err'])
         delta_vals.append(delta)
+        degree_power_vals.append(data['internal_degree_power_db'])
+        degree_sample_counts.append(data['internal_degree_sample_count'])
         prev_ratio = ratio
         
         print(f"{n:<10} | {ratio:<20.2f} | {data['err']:<12.2f} | {delta:<10.2f}")
+        print(f"           Degree N internal power share: {data['internal_degree_power_db']:.2f} dB "
+              f"({data['internal_degree_sample_count']}/{len(test_indices)} frequencies)")
 
     best_sfs_idx = int(np.argmax(ratio_vals))
     best_sfs_N = n_vals[best_sfs_idx]
@@ -407,6 +637,21 @@ def run_open_branch_optimizer(
 
     options = {'recommended': recommended}
 
+    tail_reference = select_tail_reference(n_vals, ratio_vals)
+    reference_data = res_s1[(tail_reference['n'], -50.0, -50.0 - test_db_transition_span, 1e-10)]
+    tail_power_vals, tail_count = calc_cumulative_tail(n_vals, tail_reference['n'], reference_data['internal_degree_shares'])
+    tail_reference['sample_count'] = tail_count
+    options.update(stage3_order_choices(n_vals, ratio_vals, err_vals, rolloff_knee, tail_power_vals, tail_reference['n']))
+    tail_by_reference = {}
+    for n, ratio in zip(n_vals, ratio_vals):
+        sample_shares = res_s1[(n, -50.0, -50.0 - test_db_transition_span, 1e-10)]['internal_degree_shares']
+        values, count = calc_cumulative_tail(n_vals, n, sample_shares)
+        tail_by_reference[str(n)] = {'n': n, 'ratio': ratio, 'sample_count': count, 'power_db': values}
+    print(f"Cumulative tail reference: N={tail_reference['n']}, Int/Ext={tail_reference['ratio']:.2f} dB "
+          f"({tail_count}/{len(test_indices)} frequencies)" + ("; best-ratio fallback" if tail_reference['fallback'] else ""))
+    for n, db in zip(n_vals, tail_power_vals):
+        print(f"  Stop at N={n}: discarded internal tail {db:.2f} dB")
+
     print("\n" + "="*65)
     print(" FINAL ORDER N RECOMMENDATION")
     print("="*65)
@@ -431,7 +676,9 @@ def run_open_branch_optimizer(
         err_vals,
         options=options,
         knee=rolloff_knee,
-        save_path=plot_save_path if save_plot else None
+        save_path=plot_save_path if save_plot else None,
+        internal_tail_power_db=tail_power_vals,
+        tail_reference=tail_reference,
     )
     if saved_plot:
         print(f"Stage 3 order sweep plot saved to: {saved_plot}")
@@ -448,6 +695,14 @@ def run_open_branch_optimizer(
             'ratios': ratio_vals,
             'residuals': err_vals,
             'delta_ratios': delta_vals,
+            'internal_degree_power_db': degree_power_vals,
+            'internal_tail_power_db': tail_power_vals,
+            'tail_reference': tail_reference,
+            'tail_by_reference': tail_by_reference,
+            'internal_degree_sample_counts': degree_sample_counts,
+            'sample_frequency_count': len(test_indices),
+            'sample_frequencies_hz': f_all[test_indices].tolist(),
+            'octave_resolution': octave_resolution,
             'rolloff_knee': rolloff_knee,
         },
         'warning': warning,
@@ -474,7 +729,8 @@ def main():
         test_db_transition_span=config_process.TEST_DB_TRANSITION_SPAN,
         use_optimized_origins=getattr(config_process, 'USE_OPTIMIZED_ORIGINS', False),
         speed_of_sound=getattr(config_process, 'SPEED_OF_SOUND', 343.0),
-        kr_offset=KR_OFFSET
+        kr_offset=KR_OFFSET,
+        octave_resolution=getattr(config_process, 'TEST_OCTAVE_RESOLUTION', 12),
     )
 
 if __name__ == "__main__":
