@@ -7,7 +7,43 @@ import stage3_optimize_she_settings as stage3
 def test_three_order_choices_use_strict_thresholds():
     choices = stage3.stage3_order_choices([2, 3, 4, 5], [25, 23, 21, 20], [1]*4,
                                          {'n': 3}, [-20, -21, -np.inf, np.nan], 4)
-    assert {key: value['n'] for key, value in choices.items()} == {'knee': 3, 'highest': 4, 'tail': 3}
+    assert {key: value['n'] for key, value in choices.items()} == {'knee': 3}
+
+
+def test_recommend_highest_eligible_of_three_candidates():
+    choices = stage3.stage3_order_choices([2, 3, 4, 5, 6], [24, 23, 22, 21, 19], [1]*5,
+                                         {'n': 3}, [-19, -21, -25, -26, -np.inf], 6)
+    assert choices['tail']['n'] == 4
+    assert stage3.recommended_stage3_choice(choices) == 'knee'
+    choices = stage3.stage3_order_choices([2, 3, 4], [20, 19, 18], [1]*3,
+                                         {'n': 3}, [-21, -26, -np.inf], 4)
+    assert choices == {}
+    assert stage3.recommended_stage3_choice(choices) is None
+
+
+@pytest.mark.parametrize('ratio,expected', [(24, 'tail'), (19, None)])
+def test_optimizer_returns_only_eligible_choices(monkeypatch, ratio, expected):
+    monkeypatch.setattr(stage3, 'load_and_parse_npz', lambda path: {
+        'freqs': np.array([1000.]), 'complex_data': {'p': np.array([1.])},
+        'filenames': ['p'], 'r_arr': np.ones(1), 'th_arr': np.ones(1),
+        'ph_arr': np.ones(1), 'origins_mm': None})
+    monkeypatch.setattr(stage3, 'get_grid_limit', lambda *args: (5, 72))
+    def worker(args):
+        n = args[5]
+        shares = np.array([.9, .05, .04, .008, .0015, .0005])[:n+1]
+        shares /= shares.sum()
+        return dict(N=n, st_db=args[6], mx_db=args[7], lam=args[8], ratio_db=ratio,
+                    err=1, internal_degree_fraction=shares[-1], internal_degree_shares=shares)
+    monkeypatch.setattr(stage3, '_worker', worker)
+    result = stage3.run_open_branch_optimizer('', 'unused', (2, 5), (-20, -60),
+                                              (1e-7, .01), 20, 1000, 1000,
+                                              save_plot=False, use_process_pool=False)
+    assert result['recommended_key'] == expected
+    if expected:
+        assert result['options'][expected]['n'] == 3
+    else:
+        assert not result['options']
+        assert result['warning']
 
 
 def test_choices_exclude_reference_zero_and_handle_missing_choices():
@@ -19,8 +55,9 @@ def test_choices_exclude_reference_zero_and_handle_missing_choices():
 
 def test_tail_choice_updates_with_reference():
     args = ([2, 3, 4], [25, 23, 21], [1, 1, 1], None)
-    assert stage3.stage3_order_choices(*args, [-21, -np.inf, np.nan], 3)['tail']['n'] == 2
-    assert stage3.stage3_order_choices(*args, [-19, -22, -np.inf], 4)['tail']['n'] == 3
+    assert 'tail' not in stage3.stage3_order_choices(*args, [-24.49, -np.inf, np.nan], 3)
+    assert stage3.stage3_order_choices(*args, [-24.5, -np.inf, np.nan], 3)['tail']['n'] == 2
+    assert stage3.stage3_order_choices(*args, [-19, -25, -np.inf], 4)['tail']['n'] == 3
 
 
 def test_tail_reference_uses_highest_qualifying_order_and_strict_threshold():

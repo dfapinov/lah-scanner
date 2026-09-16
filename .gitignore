@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.test-temp-stage3-*/
+.stage3-verify-*/
+pytest-cache-files-*/
+/analysis/stage3_selection/
 .tmp_pytest/
 .tmp_uv_cache/
 origins_cache*.pkl
