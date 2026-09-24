@@ -61,7 +61,8 @@ For a normal first run:
 3. Set **Octave Resolution (1/x)** for the frequency resolution you want.
 4. Leave **Max Window Cap (ms)** at `200-400` for most datasets.
 5. Leave **Enable Auto Gain** disabled if you use calibrated SPL from the HALS Capture app.
-6. Click **Run Stage 1**.
+6. Leave **Enable Smoothing** and **Sliding HF smoothing** enabled, with **Smoothing Octave Res (1/x)** set to `Auto`.
+7. Click **Run Stage 1**.
 
 The progress of Stage 1 processing is displayed in the console pane. The viewer always opens once processing completes. Note: these results are only to inspect that the data looks reasonable. Unlike standard acoustic measurements, this is only one step of the HALS speaker measurement process.
 
@@ -119,17 +120,34 @@ The target peak level used when **Enable Auto Gain** is on.
 
 The value is in dBFS. For example, `-3.0` means the loudest peak in the batch is scaled to -3 dBFS.
 
-## Advanced Settings
+### Enable Smoothing
 
-Click **Show Advanced Settings** to reveal these controls.
+Turns complex frequency-domain smoothing on or off. Enabled by default.
+
+For normal HALS processing, leave this enabled. Turn it off when you want to inspect or compare the raw FDW result. With smoothing disabled, **Sliding HF smoothing** has no effect.
 
 ### Smoothing Octave Res (1/x)
 
-The resolution of the complex smoothing pass.
+The base resolution of the complex smoothing pass.
 
-Stage 1 has two smoothing-like effects. FDW naturally smooths the response through time windowing. Complex smoothing is a separate pass that explicitly smooths both the frequency and phase.
+Stage 1 has two smoothing effects. FDW naturally smooths the response through time windowing. Complex smoothing is a separate pass that averages the complex response, affecting both magnitude and phase.
 
-`Auto` means the app uses twice the FDW octave resolution. For example, if **Octave Resolution (1/x)** is `12`, smoothing uses `24`. This keeps the benefits of complex smoothing while presurving the detail of the initial windowing.
+`Auto` means the app uses twice the FDW octave-resolution denominator. For example, if **Octave Resolution (1/x)** is `12`, the base complex smoothing is `24` (1/24 octave). This adds a light touch of complex smoothing where windowing already provides most of the smoothing.
+
+### Sliding HF smoothing
+
+Always used when complex smoothing is enabled. Below the fixed-window RFT transition, complex smoothing keeps the base bandwidth. Above the transition, its bandwidth gradually increases toward the selected FDW octave bandwidth as frequency increases.
+
+For example, with FDW set to `12` and smoothing set to `Auto`, complex smoothing stays at 1/24 octave in the FDW range and widens toward 1/12 octave in the high-frequency fixed-window range.
+
+The adjustment follows the estimated number of cycles within the fixed window, using the same cycles-to-resolution relationship as FDW. There is no separate eased-onset frequency band. As the fixed window contributes less smoothing in octave terms, complex smoothing progressively picks up the difference.
+
+Sliding smoothing is always used when complex smoothing is enabled. A manually selected base denominator must be at least the FDW denominator (for example, 24 for FDW 12). Older project settings cannot select fixed smoothing.
+
+
+## Advanced Settings
+
+Click **Show Advanced Settings** to reveal these controls.
 
 ### Alpha HF / LF
 
@@ -163,12 +181,6 @@ If the window aligns too late, try a more negative value such as `-18`. If it lo
 ### Debug / Inspection
 
 These controls are useful when checking or comparing Stage 1 behavior. For normal processing, the defaults are usually appropriate.
-
-### Enable Smoothing
-
-Turns complex frequency-domain smoothing on or off.
-
-For normal HALS processing, leave this enabled. Turn it off when you want to inspect or compare the raw FDW result for diagnosis.
 
 ### Keep Raw & Smoothed
 
@@ -281,6 +293,17 @@ Think of the Complex Domain as a way to describe the full signal where phase and
 By applying smoothing to the Real and Imaginary parts simultaneously, we smooth the overall response while maintaining the physical relationship between magnitude and phase. 
 
 ---
+
+## How Windowing and Complex Smoothing Share the Work
+
+The primary smoothing mechanism changes across the frequency range:
+
+- **FDW range:** the window length follows frequency to maintain approximately the requested octave resolution. Windowing provides most of the smoothing, while the narrower complex-smoothing kernel adds a light touch.
+- **Fixed-window RFT range:** the window length stays constant, so it contains more cycles as frequency rises. Its smoothing bandwidth becomes narrower in octave terms. Sliding complex smoothing gradually widens to compensate, approaching the requested FDW octave bandwidth at high frequencies.
+
+For FDW 1/12 octave with `Auto` complex smoothing, the kernel therefore stays at 1/24 octave below the transition and approaches 1/12 octave above it. Its width follows the cycle-based estimate of the fixed window's remaining smoothing contribution, rather than the crossfade between FDW windows.
+
+This is an approximate balance between two different smoothing mechanisms, not an exact combined octave resolution. In particular, FDW 1/12 plus complex smoothing 1/24 produces slightly stronger smoothing than FDW 1/12 alone.
 
 ## The Bonus Effect: Reflection Rejection
 Beyond just making the data easier to process, Complex Smoothing provides a secondary, powerful benefit: it further cleans the measurement of room reflections.

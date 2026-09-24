@@ -42,6 +42,7 @@ hiddenimports = [
     "extract_pressures_core",
     "fdw_smoothing_core",
     "schema",
+    "session_pool",
     "she_solver_core",
     "stage1_fdwsmooth",
     "stage2_centre_origin",

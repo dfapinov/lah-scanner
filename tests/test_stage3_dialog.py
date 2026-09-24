@@ -38,7 +38,7 @@ options = stage3.stage3_order_choices(orders, ratios, [1]*4, None, power, 5, tai
 if tail_only:
     options = {'spl':dict(n=3,ratio=9,err=1,tail_db=float('nan'),spl_db=1,label='SPL plateau')}
 result = dict(options=options, recommended_key=stage3.recommended_stage3_choice(options),
-              tail_only=tail_only, mode_note='Tail-only test', step1=dict(
+              tail_only=tail_only, mode_note='Tail-only test', plot_path='existing-stage3.png', step1=dict(
     orders=orders, ratios=ratios, residuals=[1]*4, internal_tail_power_db=power,
     tail_reference=dict(n=5, ratio=ratios[-1], fallback=False, tail_only=tail_only),
     tail_by_reference={
@@ -59,16 +59,20 @@ if with_spl and not tail_only and sys.argv[3] != 'True':
     result['options']['spl'] = dict(n=4, ratio=23, tail_db=float('nan'), spl_db=.4, label='Directivity change')
     result['recommended_key'] = 'knee'
     result['step1']['rolloff_knee'] = {'n': 3}
+saved_calls = []
+stage3.save_stage3_order_sweep_plot = lambda *args, **kwargs: saved_calls.append((args, kwargs)) or kwargs['save_path']
 try:
     ui.SpkrScannerApp._show_stage3_choice_popup(root, result)
     root.update()
     figures = [ui.plt.figure(n) for n in ui.plt.get_fignums()]
     figure = next(fig for fig in figures if fig.axes[0].get_ylabel() == 'Int/Ext ratio (dB)')
-    assert len(figures) == 1 + int(with_spl)
-    assert len(figure.axes) == 2
+    power_figure = next(fig for fig in figures if fig.axes[0].get_ylabel() == 'Discarded internal power (dB)')
+    assert len(figures) == 2 + int(with_spl)
+    assert len(figure.axes) == len(power_figure.axes) == 1
     if tail_only:
-        for ax in figure.axes[:2]:
-            assert any('Unavailable for order selection' in text.get_text() for text in ax.texts)
+        assert any('Unavailable for order selection' in text.get_text() for text in figure.axes[0].texts)
+        assert any(text.get_text() == 'select a reference order manually to use sound power discarded'
+                   for text in power_figure.axes[0].texts)
     assert all(ax.get_figure() is figure for ax in figure.axes)
     def descendants(widget):
         for child in widget.winfo_children():
@@ -76,24 +80,24 @@ try:
             yield from descendants(child)
     widgets = list(descendants(root))
     if with_spl:
-        spl_figure = next(fig for fig in figures if fig is not figure)
+        spl_figure = next(fig for fig in figures if fig not in (figure, power_figure))
         assert len(spl_figure.axes[0].lines) == 1
         assert spl_figure.axes[0].get_title() == 'Change to Directivity Pattern'
         assert spl_figure.axes[0].get_xlabel() == figure.axes[0].get_xlabel()
-        assert figure.axes[1].get_xlabel().startswith(figure.axes[0].get_xlabel())
+        assert power_figure.axes[0].get_xlabel().startswith(figure.axes[0].get_xlabel())
         assert not any(isinstance(w, ttk.Notebook) for w in widgets)
+    combo = next(w for w in widgets if isinstance(w, ttk.Combobox))
+    combo.current(1)
+    combo.event_generate('<<ComboboxSelected>>')
+    root.update()
+    assert not errors, errors
     if not tail_only:
-        combo = next(w for w in widgets if isinstance(w, ttk.Combobox))
-        combo.current(1)
-        combo.event_generate('<<ComboboxSelected>>')
-        root.update()
-        assert figure.axes[0].get_title() == 'Solve Stability'
-        assert figure.axes[1].get_title() == 'Sound Power Discarded'
-        assert 'Reference N=4' in figure.axes[1].get_xlabel()
-        assert figure.axes[1].get_xlim() == figure.axes[0].get_xlim()
-        assert not any(line.get_linestyle() == ':' for line in figure.axes[1].lines)
-    else:
-        assert not any(isinstance(w, ttk.Combobox) for w in widgets)
+        assert figure.axes[0].get_title() == 'Source to Room Field Ratio'
+    assert power_figure.axes[0].get_title() == 'Sound Power Discarded'
+    assert 'Reference N=' not in power_figure.axes[0].get_xlabel()
+    assert any('Total sound power discarded' in text.get_text() for text in power_figure.axes[0].texts)
+    assert power_figure.axes[0].get_xlim() == figure.axes[0].get_xlim()
+    assert not any(line.get_linestyle() == ':' for line in power_figure.axes[0].lines)
     if with_spl and not tail_only and sys.argv[3] != 'True':
         radios = [w for w in descendants(root) if isinstance(w, ttk.Radiobutton)]
         assert {w.cget('value') for w in radios} == {'knee', 'tail', 'spl'}
@@ -101,13 +105,13 @@ try:
         assert spl_figure.axes[0].collections
     assert not errors, errors
     button = next(w for w in widgets if isinstance(w, ttk.Button) and w.cget('text') == 'Use in Stage 4')
-    if tail_only and sys.argv[3] == 'True':
-        assert str(button.cget('state')) == 'disabled'
-        next(w for w in widgets if isinstance(w, ttk.Button) and w.cget('text') == 'Cancel').invoke()
-        assert root.stage4_vars['target_n_max'].get() == '99'
-    else:
-        button.invoke()
-        assert root.stage4_vars['target_n_max'].get() == '3'
+    button.invoke()
+    expected_n = '4' if with_spl and not tail_only and sys.argv[3] != 'True' else '3'
+    assert root.stage4_vars['target_n_max'].get() == expected_n
+    assert len(saved_calls) == 1
+    assert saved_calls[0][1]['save_path'] == 'existing-stage3.png'
+    assert saved_calls[0][1]['tail_reference']['n'] == 4
+    assert saved_calls[0][1]['internal_tail_power_db'][1] == -26
     root.update()
     assert not ui.plt.get_fignums()
     assert not errors, errors

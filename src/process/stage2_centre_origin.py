@@ -111,6 +111,7 @@ import itertools
 from datetime import datetime
 from multiprocessing import Pool, cpu_count, get_context
 from concurrent.futures import ThreadPoolExecutor
+from session_pool import borrow_pool
 from scipy.optimize import minimize
 import schema
 
@@ -324,7 +325,7 @@ def run_speed_of_sound_candidate_batch(
     ]
     if use_process_pool:
         ctx = get_context('spawn')
-        with ctx.Pool(processes=workers) as pool:
+        with borrow_pool(workers) or ctx.Pool(processes=workers) as pool:
             return list(pool.imap_unordered(_worker_speed_of_sound_candidate, worker_args))
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -445,7 +446,7 @@ def generate_3d_landscape_volumetric(context):
                 sys.stdout.flush()
 
     if cfg.get('use_process_pool', True):
-        with get_context('spawn').Pool(grid_workers) as pool:
+        with borrow_pool(grid_workers) or get_context('spawn').Pool(grid_workers) as pool:
             consume_results(pool.imap(_worker_landscape_3d, pixels, chunksize=200))
     else:
         with ThreadPoolExecutor(max_workers=grid_workers) as executor:

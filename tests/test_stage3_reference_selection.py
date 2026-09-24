@@ -3,6 +3,46 @@ import pytest
 import stage3_optimize_she_settings as stage3
 
 
+# Rounded measured Tweeter ratios: 3–20 kHz, 1/12 octave, N2–15.
+TWEETER_RATIOS = [22.05, 23.79, 24.68951, 23.62154, 22.87330, 22.56472,
+                  21.98869, 21.40082, 21.33082, 20.71144, 20.07389,
+                  19.96735, 18.57909, 15.57003]
+
+
+def test_second_pass_finds_measured_tweeter_steepening_not_early_flattening():
+    orders = list(range(2, 16))
+    assert stage3.find_rolloff_knee(orders, TWEETER_RATIOS)['n'] == 13
+    knee = stage3.find_eligible_rolloff_knee(orders, TWEETER_RATIOS)
+    assert knee['n'] == 10
+    assert knee['initial_knee_n'] == 13
+    assert knee['ratio'] > 20
+
+
+def test_eligible_first_pass_is_preserved_exactly():
+    orders = list(range(2, 16))
+    ratios = np.array(TWEETER_RATIOS) + 2
+    assert stage3.find_eligible_rolloff_knee(orders, ratios) == stage3.find_rolloff_knee(orders, ratios)
+
+
+def test_second_pass_requires_two_real_declines_and_usable_separation():
+    orders = list(range(2, 16))
+    ratios = list(TWEETER_RATIOS)
+    ratios[9] = 20.1  # Remove confirmation from N11 to N12.
+    assert stage3.find_eligible_rolloff_knee(orders, ratios) is None
+    assert stage3.find_eligible_rolloff_knee(orders, np.array(TWEETER_RATIOS)-5) is None
+    assert stage3.find_eligible_rolloff_knee([2, 3], [23, 22]) is None
+
+
+@pytest.mark.parametrize('orders, expected', [((6, 8, 7), 'tail'),
+                                            ((8, 6, 7), 'knee'),
+                                            ((6, 7, 8), 'spl'),
+                                            ((8, 8, 8), 'knee')])
+def test_recommend_highest_eligible_order(orders, expected):
+    options = {key: {'n': n, 'ratio': 21} for key, n in zip(('knee', 'tail', 'spl'), orders)}
+    assert stage3.recommended_stage3_choice(options) == expected
+    assert stage3.recommended_stage3_choice({}) is None
+
+
 def diagnostic(values, support=None):
     return dict(orders=list(range(2, 2+len(values))), max_change_db=values,
                 added_degree_frequency_counts=support or [10]*len(values))
@@ -28,7 +68,7 @@ def test_no_rise_disabled_or_capped_minimum_is_not_a_reference():
 
 def test_soft_boundary_and_tail_priority_over_higher_knee():
     options = stage3.stage3_order_choices([2,3,4,5], [25]*4, [1]*4,
-                                          {'n':4}, [-24.49,-24.5,-27,-np.inf], 5)
+                                          {'n':4}, [-23.99,-24.0,-27,-np.inf], 5)
     assert options['tail']['n'] == 3
     assert stage3.recommended_stage3_choice(options) == 'knee'
     assert stage3.stage3_order_choices([2,3], [25]*2, [1]*2, None,
@@ -63,7 +103,7 @@ def test_optimizer_selects_spl_when_no_separation_reference(monkeypatch, ratio, 
             calls.append(fn.__name__)
             return map(fn, tasks)
     pool = BorrowedPool() if borrow_pool else None
-    result=stage3.run_open_branch_optimizer('', 'unused', (2,9), (-20,-60), (1e-7,.01), 20,
+    result=stage3.run_open_branch_optimizer('', 'unused', (2,9),
                                            800,1200, save_plot=False, use_process_pool=borrow_pool,
                                            process_pool=pool)
     if borrow_pool:
@@ -72,8 +112,8 @@ def test_optimizer_selects_spl_when_no_separation_reference(monkeypatch, ratio, 
     assert result['below_rft'] == below_rft
     assert result['test_band_hz'] == ([300,1200] if below_rft else [800,1200])
     assert result['step1']['tail_reference']['n'] == (None if expect_spl else 9)
-    assert result['recommended_key'] == ('spl' if expect_spl else 'tail')
-    assert result['options'][result['recommended_key']]['n'] == (5 if expect_spl else 2)
+    assert result['recommended_key'] == 'spl'  # N5 exceeds the eligible tail's N2.
+    assert result['options'][result['recommended_key']]['n'] == 5
     if expect_spl:
         assert 'tail' not in result['options']
         assert 'spl_safe' not in result['options']

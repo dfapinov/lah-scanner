@@ -232,7 +232,8 @@ def fdwsmooth(
     # ---- Parallel processing of individual files ----
     if use_process_pool:
         ctx = multiprocessing.get_context('spawn')
-        executor_context = ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx)
+        from session_pool import borrow_pool
+        executor_context = borrow_pool(num_workers) or ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx)
     else:
         executor_context = ThreadPoolExecutor(max_workers=num_workers)
 

@@ -97,6 +97,23 @@ By applying smoothing to the Real and Imaginary parts simultaneously, we smooth 
 
 ---
 
+## How Windowing and Complex Smoothing Share the Work
+
+HALS Viewer enables **Sliding HF smoothing** by default. The main smoothing effect comes from a different mechanism in each frequency range:
+
+* **FDW range:** The window length follows frequency to maintain approximately the requested octave resolution. Windowing does most of the smoothing, while the additional complex smoothing is a light touch. With FDW set to **1/12 octave** and smoothing set to **Auto**, the complex kernel stays at **1/24 octave** throughout this range.
+* **Fixed-window RFT range:** The time window stops shortening. As frequency increases, more cycles fit inside that fixed window, so its smoothing becomes narrower in octave terms. The complex-smoothing kernel gradually widens to compensate, approaching **1/12 octave** in this example. Complex smoothing increasingly supplies the primary smoothing effect.
+
+The sliding kernel uses the same approximate relationship between cycle count and octave resolution that determines the FDW window lengths. It starts widening continuously at the FDW/RFT transition and follows the cycle-based schedule above it. There is no separate delayed or eased-onset band.
+
+This provides a gradual handover between the two mechanisms, rather than applying the full target complex-smoothing bandwidth on top of the FDW throughout the spectrum. The combination is approximate: windowing and complex smoothing are different operations, and their combined resolution is not exactly the selected octave value. In particular, FDW 1/12 plus a light 1/24 complex kernel still produces slightly more smoothing than FDW alone.
+
+In Stage 1, **Enable Smoothing** controls whether complex smoothing is applied. **Smoothing Octave Res** sets the base kernel below the transition; **Auto** uses twice the FDW denominator (24 for FDW 12). With **Sliding HF smoothing** enabled, the kernel approaches the FDW octave bandwidth at high frequencies. Turn it off to keep the base complex-smoothing resolution fixed across the spectrum. Explicit saved choices are retained; new projects and projects without a saved sliding-smoothing setting use the new default.
+
+Enable **Compare with fixed smoothing** to overlay the fixed-kernel result and save a separate `_fixed_smoothing.npz` comparison file.
+
+---
+
 ## The Bonus Effect: Reflection Rejection
 Beyond just making the data easier to process, Complex Smoothing provides a secondary, powerful benefit: it further cleans the measurement of room reflections.
 

@@ -36,6 +36,8 @@ The GUI streamlines project management and grid generation as well as all proces
 
 ## Code Overview
 
+The GUI warms a shared worker pool at startup and reuses it across all five stages and live previews. The bottom-left status shows startup, readiness, or a retryable error. See [shared processing workers](documentation/process_pool.md) for concurrency limits and recovery behavior.
+
 The project is divided into two primary functional groups: **Grid Generation & Planning** and the **Processing Pipeline**. Detailed documentation for each stage can be found in the `documentation/` folder.
 
 ### 🎤 Grid Generation

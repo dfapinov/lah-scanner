@@ -138,10 +138,10 @@ def plot_spl_changes(ax, result):
     from stage3_optimize_she_settings import format_stage3_order_axis
     format_stage3_order_axis(ax)
     ax.set_ylabel('Absolute SPL change (dB)')
-    ax.set_title('Change to Directivity Pattern', fontsize=12, fontweight='bold', pad=46)
+    ax.set_title('Change to Directivity Pattern', fontsize=12, fontweight='bold', pad=32)
     ax.text(.5, 1.02, 'Source pressure is reconstructed over a sphere; the change in SPL\n'
             'across directions is assessed when one more order is added.',
-            transform=ax.transAxes, ha='center', va='bottom', fontsize=9)
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=8)
     ax.set_xticks(result['orders'])
     ax.set_ylim(bottom=0)
     ax.grid(True, linestyle='--', alpha=.35)

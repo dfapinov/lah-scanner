@@ -295,12 +295,39 @@ class SpkrScannerApp(tk.Tk):
         self.stage5_live_plot_limits = {}
         self.stage5_live_plot_drag = None
 
+        from session_pool import SessionPool, install_session_pool
+        self.process_pool = SessionPool()
+        install_session_pool(self.process_pool)
+        self.process_pool.start()
         self._build_ui()
+        self.after(100, self._poll_process_pool)
         self.bind("<FocusIn>", self._raise_stage5_live_with_main, add="+")
         self.bind("<Map>", self._raise_stage5_live_with_main, add="+")
         
         # Schedule splash screen to close and main window to show after 1000ms
         self.after(1500, self._close_splash)
+
+    def _poll_process_pool(self):
+        pool = self.process_pool
+        if pool.state == 'closed':
+            return
+        if pool.state == 'ready':
+            if getattr(self, '_last_pool_state', None) != 'ready':
+                self.status_var.set(f"{self.active_stage_job} running..." if self.active_stage_job
+                                    else f"Ready. Process pool: {pool.workers} workers.")
+        elif pool.state == 'failed':
+            self.status_var.set(f"Process pool unavailable: {pool.error}")
+        else:
+            label = f"Starting the process pool... ({pool.initialized_workers}/{pool.workers} workers)"
+            if self.active_stage_job:
+                label += f" ? {self.active_stage_job} waiting."
+            self.status_var.set(label)
+        self._last_pool_state = pool.state
+        if pool.state == 'failed' and self.active_stage_job is None:
+            self.pool_retry_button.pack(side=tk.RIGHT)
+        else:
+            self.pool_retry_button.pack_forget()
+        self.after(200, self._poll_process_pool)
 
     def _set_icon(self):
         icon_path = os.path.join(current_dir, "HALS_icon.ico")
@@ -339,9 +366,12 @@ class SpkrScannerApp(tk.Tk):
 
     def _build_ui(self):
         # --- STATUS BAR ---
-        self.status_var = tk.StringVar(value="Ready.")
-        status_bar = ttk.Label(self, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=(5, 2))
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.status_var = tk.StringVar(value="Starting the process pool...")
+        status_frame = ttk.Frame(self)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        self.pool_retry_button = ttk.Button(status_frame, text="Retry pool", command=self.process_pool.start)
+        ttk.Label(status_frame, textvariable=self.status_var, relief=tk.SUNKEN,
+                  anchor=tk.W, padding=(5, 2)).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.main_paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         self.main_paned.pack(fill=tk.BOTH, expand=True)
@@ -1158,6 +1188,8 @@ class SpkrScannerApp(tk.Tk):
         # Remove obsolete controls even when merging a previously saved project.
         settings["stage3_vars"].pop('spl_change_enabled', None)
         settings["stage3_vars"].pop('spl_floor_db', None)
+        for removed_key in ('optimize_regularization', 'test_start_db_range', 'test_lambda_range', 'test_db_transition_span'):
+            settings['stage3_vars'].pop(removed_key, None)
         settings["stage4_vars"] = self._merged_section(
             base_settings,
             "stage4_vars",
@@ -1260,6 +1292,8 @@ class SpkrScannerApp(tk.Tk):
                     self._seed_stage3_start_from_npz(force=('freq_start_hz' not in loaded_stage3_keys))
                 else:
                     self._seed_stage3_start_from_npz(force=True)
+                if 'enable_regularization' in getattr(self, 'stage4_vars', {}):
+                    self.stage4_vars['enable_regularization'].set(False)
                 if "stage4_vars" in settings:
                     for k, v in settings["stage4_vars"].items():
                         if k in getattr(self, 'stage4_vars', {}):
@@ -1960,12 +1994,14 @@ class SpkrScannerApp(tk.Tk):
 
         # Do not let a persistent preview pool compete with a full processing
         # stage for the same CPU cores.
+        preview_evaluator = self.stage5_live_evaluator
         if self.stage5_live_window is not None:
-            self._close_stage5_live_preview(wait_for_pool=True)
+            self._close_stage5_live_preview(wait_for_pool=False)
 
         self.active_stage_job = stage_name
         self._set_stage_run_buttons(tk.DISABLED)
-        self.status_var.set(f"{stage_name} running...")
+        self.status_var.set(f"{stage_name} running..." if self.process_pool.state == 'ready'
+                            else f"{stage_name}: waiting for process pool...")
         self.cli_text.config(state=tk.NORMAL)
         self.cli_text.insert(tk.END, f"\n--- Starting {stage_name} ---\n")
         self.cli_text.config(state=tk.DISABLED)
@@ -1975,6 +2011,10 @@ class SpkrScannerApp(tk.Tk):
             if gc_was_enabled:
                 gc.disable()
             try:
+                # Waiting happens on the job thread, never the Tk thread.
+                self.process_pool.executor()
+                if preview_evaluator is not None:
+                    preview_evaluator.close()
                 result = worker()
                 self.stage_job_queue.put(("success", stage_name, result, on_success, gc_was_enabled))
             except Exception as exc:
@@ -2451,7 +2491,6 @@ class SpkrScannerApp(tk.Tk):
         self.stage3_vars['spl_radius_m'] = self._add_form_entry(self.stage3_adv_frame, "Directivity-change sphere radius (m):", "1.0",
             "Fixed sphere centred on the measurement coordinate origin. It should enclose the source.")
 
-
         # --- Button ---
         self.btn_stage3_run = ttk.Button(main_container, text="Run Stage 3", command=self._action_run_stage3)
         self.btn_stage3_run.pack(side=tk.TOP, pady=20)
@@ -2504,41 +2543,25 @@ class SpkrScannerApp(tk.Tk):
 
     def _run_stage3_job(self, settings):
         from stage3_optimize_she_settings import run_open_branch_optimizer
-        from concurrent.futures import ProcessPoolExecutor
-        from concurrent.futures.process import BrokenProcessPool
-        import multiprocessing
+        from session_pool import borrow_pool
 
-        if getattr(self, '_stage3_pool', None) is None:
-            self._stage3_pool = ProcessPoolExecutor(max_workers=6, mp_context=multiprocessing.get_context('spawn'))
-            print('Stage 3: created session process pool; workers will be reused.')
-        else:
-            print('Stage 3: reusing session process pool.')
-
-        try:
-            return run_open_branch_optimizer(
-                input_dir_opti=settings['input_dir'],
-                input_filename_opti=settings['input_filename'],
-                test_order_range=settings['order_range'],
-                octave_resolution=settings.get('octave_resolution', 12),
-                spl_change_enabled=True,
-                spl_sphere_points=settings.get('spl_sphere_points', 1000),
-                spl_radius_m=settings.get('spl_radius_m', 1.0),
-                spl_floor_db=-40.0,
-                freq_start_hz=settings['freq_start_hz'],
-                freq_end_hz=settings['freq_end_hz'],
-                test_start_db_range=(-20.0, -60.0),
-                test_lambda_range=(0.0000001, 0.01),
-                test_db_transition_span=20.0,
-                use_optimized_origins=True,
-                speed_of_sound=343.0,
-                kr_offset=2.0,
-                use_process_pool=True,
-                process_pool=self._stage3_pool,
-            )
-        except BrokenProcessPool:
-            self._stage3_pool.shutdown(wait=False, cancel_futures=True)
-            self._stage3_pool = None
-            raise
+        return run_open_branch_optimizer(
+            input_dir_opti=settings['input_dir'],
+            input_filename_opti=settings['input_filename'],
+            test_order_range=settings['order_range'],
+            octave_resolution=settings.get('octave_resolution', 12),
+            spl_change_enabled=True,
+            spl_sphere_points=settings.get('spl_sphere_points', 1000),
+            spl_radius_m=settings.get('spl_radius_m', 1.0),
+            spl_floor_db=-40.0,
+            freq_start_hz=settings['freq_start_hz'],
+            freq_end_hz=settings['freq_end_hz'],
+            use_optimized_origins=True,
+            speed_of_sound=343.0,
+            kr_offset=2.0,
+            use_process_pool=True,
+            process_pool=borrow_pool(6),
+        )
 
     def _finish_stage3_job(self, optimizer_result):
         if optimizer_result.get('below_rft', optimizer_result.get('tail_only')):
@@ -2592,7 +2615,7 @@ class SpkrScannerApp(tk.Tk):
         sections = content.strip().split("\n\n")
         for paragraph in sections[1:]:
             lines = paragraph.splitlines()
-            if lines[0] in ("Choosing the test frequency band", "Top graph: Solve Stability",
+            if lines[0] in ("Choosing the test frequency band", "Top graph: Source to Room Field Ratio",
                             "Bottom graph: Sound Power Discarded", "The three choices", "How we recommend an order", "Incremental SPL change graph",
                             "Below the reflection-free range"):
                 text.insert(tk.END, lines[0] + "\n", "heading")
@@ -2660,7 +2683,7 @@ class SpkrScannerApp(tk.Tk):
         if band:
             ttk.Label(header, text=f"Test range: {band[0]:g} - {band[1]:g} Hz",
                       font=('Arial', 12, 'bold')).pack(anchor=tk.CENTER)
-        ttk.Label(header, text='Higher orders describe more detail; too high can introduce errors or spurious detail.',
+        ttk.Label(header, text='Higher orders describe more detail; too high can introduce errors and noise.',
                   wraplength=1000, justify=tk.CENTER).pack(anchor=tk.CENTER, pady=(6, 0))
         content = ttk.Frame(top)
         content.pack(fill=tk.BOTH, expand=True)
@@ -2670,12 +2693,20 @@ class SpkrScannerApp(tk.Tk):
         graph_area = ttk.Frame(frame)
         graph_area.columnconfigure(0, weight=1, uniform='graphs')
         graph_area.columnconfigure(1, weight=1, uniform='graphs')
-        left_graphs = ttk.Frame(graph_area)
-        left_graphs.grid(row=0, column=0, sticky='nsew')
-        sidebar = ttk.Frame(graph_area, padding=(8, 0, 0, 0))
-        sidebar.grid(row=0, column=1, sticky='nsew')
+        graph_area.rowconfigure(0, weight=1, uniform='graph_rows')
+        graph_area.rowconfigure(1, weight=1, uniform='graph_rows')
+        stability_panel = ttk.Frame(graph_area)
+        stability_panel.grid(row=0, column=0, sticky='nsew', padx=(0, 4), pady=(0, 4))
+        directivity_panel = ttk.Frame(graph_area)
+        directivity_panel.grid(row=0, column=1, sticky='nsew', padx=(4, 0), pady=(0, 4))
+        power_panel = ttk.Frame(graph_area)
+        power_panel.grid(row=1, column=0, sticky='nsew', padx=(0, 4), pady=(4, 0))
+        recommendations_panel = ttk.Frame(graph_area)
+        recommendations_panel.grid(row=1, column=1, sticky='nsew', padx=(4, 0), pady=(4, 0))
+        reference_area = ttk.Frame(frame)
 
-        plot_fig = None
+        ratio_fig = None
+        power_fig = None
         spl_fig = None
         step1 = optimizer_result.get("step1", {}) if isinstance(optimizer_result, dict) else {}
         tail_only = optimizer_result.get('tail_only', False) if isinstance(optimizer_result, dict) else False
@@ -2687,7 +2718,7 @@ class SpkrScannerApp(tk.Tk):
         from stage3_optimize_she_settings import (STAGE3_CHOICE_HELP, STAGE3_CHOICE_STYLES,
                                                   stage3_order_choices, highlight_stage3_choices,
                                                   recommended_stage3_choice, format_tail_power, format_stage3_ratio_axis,
-                                                  format_stage3_order_axis)
+                                                  format_stage3_order_axis, plot_internal_tail_power)
         options = dict(options)
         choice_var = tk.StringVar(value=next((key for key in STAGE3_CHOICE_STYLES
                                              if key in options and options[key]['n'] == recommended['n']), recommended_key))
@@ -2699,70 +2730,20 @@ class SpkrScannerApp(tk.Tk):
         tail_power = step1.get("internal_tail_power_db")
         if tail_only:
             tail_power = degree_power = None
-        active_tail = dict(power=tail_power, n=step1.get('tail_reference', {}).get('n'))
+        active_tail = dict(
+            power=tail_power,
+            n=step1.get('tail_reference', {}).get('n'),
+            reference=step1.get('tail_reference'),
+            manually_selected=False,
+        )
         spl_change = optimizer_result.get('spl_change') if isinstance(optimizer_result, dict) else None
         choice_artists = []
         if len(orders) > 0 and len(ratios) > 0:
             has_power = tail_only or tail_power is not None or degree_power is not None
-            count = 1 + int(has_power)
-            plot_fig, axes = plt.subplots(count, 1, figsize=(6, 3.8 * count), squeeze=False)
-            ax_ratio = axes[0, 0]
-            ax_power = axes[1, 0] if has_power else None
+            ratio_fig, ax_ratio = plt.subplots(figsize=(6, 3.8))
+            power_fig, ax_power = plt.subplots(figsize=(6, 3.8)) if has_power else (None, None)
             if tail_power is not None:
-                from stage3_optimize_she_settings import plot_internal_tail_power
                 plot_internal_tail_power(ax_power, orders, tail_power, step1['tail_reference'])
-                references = step1.get('tail_by_reference', {})
-                if references:
-                    reference_frame = ttk.Frame(frame)
-                    reference_frame.pack(fill=tk.X, pady=(0, 6))
-                    ttk.Label(reference_frame, text="Sound power reference:").pack(side=tk.LEFT)
-                    default_n = step1['tail_reference']['n']
-                    reference_choices = {}
-                    for key, ref in references.items():
-                        status = "automatic" if ref['n'] == default_n else "manual"
-                        if not tail_only and ref['ratio'] <= float(sfs_rule_db):
-                            status += "; below >20 dB threshold"
-                        label = f"N={ref['n']} | Int/Ext {ref['ratio']:.2f} dB | {status}"
-                        if tail_only:
-                            status = step1['tail_reference'].get('label', 'provisional SPL reference, backed off one order') if ref['n'] == default_n else 'manual'
-                            label = f"N={ref['n']} | {status} | Int/Ext not used"
-                        reference_choices[label] = ref
-                    default_label = next((label for label, ref in reference_choices.items() if ref['n'] == default_n),
-                                         'No automatic reference - select manually')
-                    reference_var = tk.StringVar(value=default_label)
-                    reference_combo = ttk.Combobox(reference_frame, textvariable=reference_var,
-                                                   values=list(reference_choices), state="readonly",
-                                                   width=max(map(len, reference_choices)) + 2)
-                    reference_combo.pack(side=tk.LEFT, padx=(8, 0))
-
-                    def change_tail_reference(event=None):
-                        selected = reference_choices[reference_var.get()]
-                        active_tail.update(power=selected['power_db'], n=selected['n'])
-                        metadata = dict(selected, fallback=step1['tail_reference']['fallback'],
-                                        manual=selected['n'] != default_n, tail_only=tail_only,
-                                        label=step1['tail_reference'].get('label', 'provisional SPL reference, backed off one order'),
-                                        ratio_note=optimizer_result.get('ratio_note', 'Int/Ext shown for inspection; not used for selection.'))
-                        ax_power.clear()
-                        plot_internal_tail_power(ax_power, orders, selected['power_db'], metadata)
-                        updated = stage3_order_choices(orders, ratios, step1['residuals'],
-                                                      step1.get('rolloff_knee'), selected['power_db'], selected['n'], tail_only=tail_only)
-                        for key in ('knee', 'tail'):
-                            options.pop(key, None)
-                        options.update(updated)
-                        choice_var.set(recommended_stage3_choice(options) or '')
-                        for artist in choice_artists:
-                            artist.remove()
-                        if ax_ratio is not None:
-                            choice_artists[:] = highlight_stage3_choices(ax_ratio, options)
-                        highlight_stage3_choices(ax_power, options, tail=True)
-                        if ax_ratio is not None:
-                            ax_ratio.legend(loc='best', fontsize=8)
-                        ax_power.legend(loc='best', fontsize=8)
-                        refresh_choices()
-                        plot_fig.tight_layout()
-                        canvas_plot.draw_idle()
-
-                    reference_combo.bind('<<ComboboxSelected>>', change_tail_reference)
             elif degree_power is not None:
                 from stage3_optimize_she_settings import plot_internal_degree_power
                 plot_internal_degree_power(ax_power, orders, degree_power)
@@ -2774,6 +2755,63 @@ class SpkrScannerApp(tk.Tk):
                 ax_power.set_xlim(min(orders) - .5, max(orders) + .5)
                 ax_power.set_ylim(-40, 0)
                 ax_power.grid(True, linestyle='--', alpha=.2)
+            references = step1.get('tail_by_reference', {})
+            if references and (tail_power is not None or tail_only):
+                reference_frame = ttk.Frame(reference_area)
+                reference_frame.pack(fill=tk.X, pady=(6, 0))
+                ttk.Label(reference_frame, text="Sound power reference:").pack(side=tk.LEFT)
+                default_n = step1['tail_reference']['n']
+                reference_choices = {}
+                for key, ref in references.items():
+                    status = "automatic" if ref['n'] == default_n else "manual"
+                    if not tail_only and ref['ratio'] <= float(sfs_rule_db):
+                        status += "; below >20 dB threshold"
+                    label = f"N={ref['n']} | Int/Ext {ref['ratio']:.2f} dB | {status}"
+                    if tail_only:
+                        label = f"N={ref['n']} | manual | Int/Ext not used"
+                    reference_choices[label] = ref
+                default_label = next((label for label, ref in reference_choices.items()
+                                      if ref['n'] == default_n),
+                                     'Select a reference order manually')
+                reference_var = tk.StringVar(value=default_label)
+                reference_combo = ttk.Combobox(reference_frame, textvariable=reference_var,
+                                               values=list(reference_choices), state="readonly",
+                                               width=max(len(default_label), *(map(len, reference_choices))) + 2)
+                reference_combo.pack(side=tk.LEFT, padx=(8, 0))
+
+                def change_tail_reference(event=None):
+                    selected = reference_choices[reference_var.get()]
+                    metadata = dict(selected, fallback=step1['tail_reference']['fallback'],
+                                    manual=True, tail_only=tail_only,
+                                    label=step1['tail_reference'].get('label', 'manual reference'),
+                                    ratio_note=optimizer_result.get('ratio_note', 'Int/Ext shown for inspection; not used for selection.'))
+                    active_tail.update(power=selected['power_db'], n=selected['n'],
+                                       reference=metadata, manually_selected=True)
+                    ax_power.clear()
+                    plot_internal_tail_power(ax_power, orders, selected['power_db'], metadata)
+                    updated = stage3_order_choices(
+                        orders, ratios, step1['residuals'], step1.get('rolloff_knee'),
+                        selected['power_db'], selected['n'], tail_only=tail_only,
+                        manual_reference=tail_only)
+                    for key in ('knee', 'tail'):
+                        options.pop(key, None)
+                    options.update(updated)
+                    choice_var.set(recommended_stage3_choice(options) or '')
+                    for artist in choice_artists:
+                        artist.remove()
+                    if ax_ratio is not None:
+                        choice_artists[:] = highlight_stage3_choices(ax_ratio, options)
+                    highlight_stage3_choices(ax_power, options, tail=True)
+                    if ax_ratio is not None:
+                        ax_ratio.legend(loc='best', fontsize=8)
+                    ax_power.legend(loc='best', fontsize=8)
+                    refresh_choices()
+                    ratio_fig.tight_layout()
+                    power_fig.tight_layout()
+                    ratio_canvas.draw_idle()
+                    power_canvas.draw_idle()
+
+                reference_combo.bind('<<ComboboxSelected>>', change_tail_reference)
             if ax_ratio is not None:
                 ax_ratio.plot(orders, ratios, marker="o", linewidth=1.4, color="#4c78a8", label="_nolegend_")
                 ax_ratio.axhline(
@@ -2818,7 +2856,9 @@ class SpkrScannerApp(tk.Tk):
             if ax_ratio is not None:
                 handles, labels = ax_ratio.get_legend_handles_labels()
                 ax_ratio.legend(handles, labels, loc="best", fontsize=8)
-            plot_fig.tight_layout()
+            ratio_fig.tight_layout()
+            if power_fig is not None:
+                power_fig.tight_layout()
 
             if spl_change is not None:
                 from stage3_spl_change import plot_spl_changes
@@ -2827,15 +2867,15 @@ class SpkrScannerApp(tk.Tk):
                 spl_fig, ax_spl = plt.subplots(figsize=(6, 3.8))
                 plot_spl_changes(ax_spl, displayed_spl)
                 spl_fig.tight_layout()
-                spl_canvas = FigureCanvasTkAgg(spl_fig, master=sidebar)
+                spl_canvas = FigureCanvasTkAgg(spl_fig, master=directivity_panel)
                 spl_canvas.draw()
-                spl_canvas.get_tk_widget().pack(fill=tk.X)
+                spl_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             if tail_only:
                 unavailable_reason = (
                     'The upper test range is below the reflection-free (RFT) range.'
                     if optimizer_result.get('below_rft') else
                     'No tested order provides Int/Ext separation greater than 20 dB.')
-                for ax in (ax_ratio, ax_power):
+                for ax in (ax_ratio,):
                     ax.set_facecolor('#eeeeee')
                     for artist in [*ax.lines, *ax.collections]:
                         artist.set_color('#999999')
@@ -2852,17 +2892,24 @@ class SpkrScannerApp(tk.Tk):
                             fontweight='bold', color='#666666', zorder=20,
                             bbox=dict(boxstyle='round,pad=.8', facecolor='#f3f3f3',
                                       edgecolor='#bbbbbb', alpha=.95))
-            plot_fig.tight_layout()
-            graph_area.pack(fill=tk.X)
-            if has_power:
-                from matplotlib.patches import Rectangle
-                # Match the panel gutter between the two columns.
-                rgb = tuple(v / 65535 for v in top.winfo_rgb(SETTINGS_CANVAS_BG))
-                plot_fig.add_artist(Rectangle((0, .495), 1, .01,
-                    transform=plot_fig.transFigure, facecolor=rgb, edgecolor='none', zorder=10))
-            canvas_plot = FigureCanvasTkAgg(plot_fig, master=left_graphs)
-            canvas_plot.draw()
-            canvas_plot.get_tk_widget().pack(fill=tk.X, pady=(0, 8))
+                ax_power.set_facecolor('#eeeeee')
+                ax_power.text(
+                    .5, .5,
+                    'select a reference order manually to use sound power discarded',
+                    transform=ax_power.transAxes, ha='center', va='center', fontsize=9,
+                    fontweight='bold', color='#666666', zorder=20,
+                    bbox=dict(boxstyle='round,pad=.8', facecolor='#f3f3f3',
+                              edgecolor='#bbbbbb', alpha=.95))
+            graph_area.pack(fill=tk.BOTH, expand=True)
+            ratio_canvas = FigureCanvasTkAgg(ratio_fig, master=stability_panel)
+            ratio_canvas.draw()
+            ratio_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            if power_fig is not None:
+                power_canvas = FigureCanvasTkAgg(power_fig, master=power_panel)
+                power_canvas.draw()
+                power_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            if reference_area.winfo_children():
+                reference_area.pack(fill=tk.X)
 
         ratio_text = "n/a" if recommended.get("ratio") is None else f"{recommended['ratio']:.2f} dB"
         result_text = (
@@ -2872,7 +2919,7 @@ class SpkrScannerApp(tk.Tk):
         )
         if recommended.get("warning"):
             result_text += f"\n\nWarning: {recommended['warning']}"
-        choice_frame = ttk.LabelFrame(sidebar, text="Recommended Order N:", padding=6)
+        choice_frame = ttk.LabelFrame(recommendations_panel, text="Recommended Order N:", padding=6)
         choice_frame.pack(fill=tk.X, pady=(12, 6))
 
         use_button = None
@@ -2930,12 +2977,12 @@ class SpkrScannerApp(tk.Tk):
 
         refresh_choices()
 
-        help_row = ttk.Frame(sidebar)
+        help_row = ttk.Frame(recommendations_panel)
         help_row.pack(fill=tk.X, pady=10)
         ttk.Label(help_row, text='Help').pack(side=tk.LEFT)
         SpkrScannerApp._make_help_icon(self, help_row, lambda: self._show_stage3_help(top)).pack(side=tk.LEFT, padx=6)
         if plot_path:
-            ttk.Label(sidebar, text=f'Plots saved to {os.path.dirname(os.path.abspath(plot_path))}',
+            ttk.Label(recommendations_panel, text=f'Plots saved to {os.path.dirname(os.path.abspath(plot_path))}',
                       wraplength=480).pack(anchor=tk.W, pady=4)
 
         note = optimizer_result.get("warning", "") if isinstance(optimizer_result, dict) else ""
@@ -2948,6 +2995,21 @@ class SpkrScannerApp(tk.Tk):
             opt = options[choice_var.get()]
             if 'target_n_max' in self.stage4_vars:
                 self.stage4_vars['target_n_max'].set(str(opt['n']))
+            if active_tail['manually_selected'] and plot_path:
+                from stage3_optimize_she_settings import save_stage3_order_sweep_plot
+                saved_path = save_stage3_order_sweep_plot(
+                    orders,
+                    ratios,
+                    step1.get('residuals'),
+                    options=options,
+                    knee=step1.get('rolloff_knee'),
+                    save_path=plot_path,
+                    internal_tail_power_db=active_tail['power'],
+                    tail_reference=active_tail['reference'],
+                    spl_change=spl_change,
+                )
+                if saved_path:
+                    print(f"Updated Stage 3 graph image with manual sound-power reference N={active_tail['n']}: {saved_path}")
             print(f"Sent {opt.get('label', recommended_key)} (N={opt['n']}) to Stage 4.")
             close_popup()
 
@@ -2958,10 +3020,9 @@ class SpkrScannerApp(tk.Tk):
         use_button.configure(state='normal' if options else 'disabled')
 
         def close_popup():
-            if plot_fig is not None:
-                plt.close(plot_fig)
-            if spl_fig is not None:
-                plt.close(spl_fig)
+            for figure in (ratio_fig, power_fig, spl_fig):
+                if figure is not None:
+                    plt.close(figure)
             top.destroy()
 
         top.protocol("WM_DELETE_WINDOW", close_popup)
@@ -2973,7 +3034,13 @@ class SpkrScannerApp(tk.Tk):
         scrollbar = next(w for w in scroll.winfo_children() if isinstance(w, ttk.Scrollbar))
 
         def update_results_scrollbar(event=None):
-            needs_scroll = frame.winfo_reqheight() > scroll.canvas.winfo_height()
+            canvas_height = scroll.canvas.winfo_height()
+            requested_height = frame.winfo_reqheight()
+            needs_scroll = requested_height > canvas_height
+            scroll.canvas.itemconfigure(
+                scroll.canvas_window,
+                height=requested_height if needs_scroll else canvas_height,
+            )
             if needs_scroll and not scrollbar.winfo_manager():
                 scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=scroll.canvas)
             elif not needs_scroll and scrollbar.winfo_manager():
@@ -3020,11 +3087,23 @@ class SpkrScannerApp(tk.Tk):
         cb_table.pack(side=tk.LEFT)
         ttk.Button(table_frame, text="Edit Table", command=self._open_manual_table_editor).pack(side=tk.LEFT, padx=10)
         
-        ttk.Label(self.stage4_adv_frame, text="Regularization", font=("Arial", 9, "bold")).pack(side=tk.TOP, anchor=tk.W, pady=(15, 5))
-        
-        self.stage4_vars['noise_floor_start_db'] = self._add_form_entry(self.stage4_adv_frame, "Noise Floor Start (dB):", "-30.0", "Fixed default damping start.")
-        self.stage4_vars['noise_floor_max_db'] = self._add_form_entry(self.stage4_adv_frame, "Noise Floor Max (dB):", "-40.0", "Fixed default point where damping hits MAX_LAMBDA.")
-        self.stage4_vars['max_lambda'] = self._add_form_entry(self.stage4_adv_frame, "Max Lambda:", "0.00000100", "Fixed default maximum penalty applied to modes.")
+        reg_section = ttk.Frame(self.stage4_adv_frame)
+        reg_section.pack(fill=tk.X, pady=(15, 5))
+        self.stage4_vars['enable_regularization'] = tk.BooleanVar(value=False)
+        ttk.Checkbutton(reg_section, text="Enable regularization",
+                        variable=self.stage4_vars['enable_regularization']).pack(anchor=tk.W)
+        ttk.Label(reg_section, text="Regularization was developed, but not found to be useful in practice.",
+                  wraplength=760, foreground='#687078').pack(anchor=tk.W, pady=(4, 6))
+        reg_fields = ttk.Frame(reg_section)
+        self.stage4_vars['noise_floor_start_db'] = self._add_form_entry(reg_fields, "Noise Floor Start (dB):", "-30.0", "Damping start.")
+        self.stage4_vars['noise_floor_max_db'] = self._add_form_entry(reg_fields, "Noise Floor Max (dB):", "-40.0", "Threshold where damping reaches maximum strength.")
+        self.stage4_vars['max_lambda'] = self._add_form_entry(reg_fields, "Max Lambda:", "0.00000100", "Maximum damping strength.")
+        def update_regularization_fields(*_args):
+            if self.stage4_vars['enable_regularization'].get():
+                reg_fields.pack(fill=tk.X)
+            else:
+                reg_fields.pack_forget()
+        self.stage4_vars['enable_regularization'].trace_add('write', update_regularization_fields)
         self.stage4_vars['use_optimized_origins'] = self._add_checkbutton(self.stage4_adv_frame, "Use Optimized Origins", True, "Essential for best fit.")
         
         # --- Button ---
@@ -3137,6 +3216,7 @@ class SpkrScannerApp(tk.Tk):
             input_dir = os.path.join(proj_dir, "outputs")
             input_filename = f"{project_name}_complex_data.npz"
             output_dir = os.path.join(proj_dir, "outputs", "coefficients")
+            reg_enabled = self.stage4_vars['enable_regularization'].get()
             settings = {
                 'project_name': project_name,
                 'input_dir': input_dir,
@@ -3146,9 +3226,9 @@ class SpkrScannerApp(tk.Tk):
                 'target_n_max': int(self.stage4_vars['target_n_max'].get()),
                 'kr_offset': float(self.stage4_vars['kr_offset'].get()),
                 'use_manual_table': self.stage4_vars['use_manual_table'].get(),
-                'noise_floor_start_db': float(self.stage4_vars['noise_floor_start_db'].get()),
-                'noise_floor_max_db': float(self.stage4_vars['noise_floor_max_db'].get()),
-                'max_lambda': float(self.stage4_vars['max_lambda'].get()),
+                'noise_floor_start_db': float(self.stage4_vars['noise_floor_start_db'].get()) if reg_enabled else -30.0,
+                'noise_floor_max_db': float(self.stage4_vars['noise_floor_max_db'].get()) if reg_enabled else -40.0,
+                'max_lambda': float(self.stage4_vars['max_lambda'].get()) if reg_enabled else 0.0,
                 'use_optimized_origins': self.stage4_vars['use_optimized_origins'].get(),
                 'manual_table': {
                     float(k): int(v)
@@ -4479,14 +4559,18 @@ class SpkrScannerApp(tk.Tk):
     def on_closing(self):
         if DEBUG_MODE:
             print("[DEBUG] Action: Application closing")
-        pool = getattr(self, '_stage3_pool', None)
-        if pool is not None:
-            self._stage3_pool = None
-            terminate = getattr(pool, 'terminate_workers', None)
-            if terminate is not None:
-                terminate()
-            else:
-                pool.shutdown(wait=True, cancel_futures=True)
+        # Terminate workers off the Tk thread, including during warmup or a run.
+        self.status_var.set("Stopping the process pool...")
+        self._set_stage_run_buttons(tk.DISABLED)
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+        self._pool_close_thread = threading.Thread(target=self.process_pool.close, daemon=True)
+        self._pool_close_thread.start()
+        self.after(50, self._finish_closing)
+
+    def _finish_closing(self):
+        if self._pool_close_thread.is_alive():
+            self.after(50, self._finish_closing)
+            return
         if hasattr(self, 'debug_log_file') and self.debug_log_file:
             try:
                 self.debug_log_file.close()
@@ -4494,7 +4578,6 @@ class SpkrScannerApp(tk.Tk):
                 pass
         self.quit()
         self.destroy()
-        os._exit(0)
 
 
 def main():

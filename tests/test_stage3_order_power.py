@@ -35,8 +35,7 @@ def test_optimizer_returns_only_eligible_choices(monkeypatch, ratio, expected):
         return dict(N=n, st_db=args[6], mx_db=args[7], lam=args[8], ratio_db=ratio,
                     err=1, internal_degree_fraction=shares[-1], internal_degree_shares=shares)
     monkeypatch.setattr(stage3, '_worker', worker)
-    result = stage3.run_open_branch_optimizer('', 'unused', (2, 5), (-20, -60),
-                                              (1e-7, .01), 20, 1000, 1000,
+    result = stage3.run_open_branch_optimizer('', 'unused', (2, 5), 1000, 1000,
                                               save_plot=False, use_process_pool=False)
     assert result['recommended_key'] == expected
     if expected:
@@ -55,8 +54,8 @@ def test_choices_exclude_reference_zero_and_handle_missing_choices():
 
 def test_tail_choice_updates_with_reference():
     args = ([2, 3, 4], [25, 23, 21], [1, 1, 1], None)
-    assert 'tail' not in stage3.stage3_order_choices(*args, [-24.49, -np.inf, np.nan], 3)
-    assert stage3.stage3_order_choices(*args, [-24.5, -np.inf, np.nan], 3)['tail']['n'] == 2
+    assert 'tail' not in stage3.stage3_order_choices(*args, [-23.99, -np.inf, np.nan], 3)
+    assert stage3.stage3_order_choices(*args, [-24.0, -np.inf, np.nan], 3)['tail']['n'] == 2
     assert stage3.stage3_order_choices(*args, [-19, -25, -np.inf], 4)['tail']['n'] == 3
 
 

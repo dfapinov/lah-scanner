@@ -2,14 +2,7 @@
 """
 Open-Branch Spherical Energy Optimizer
 ======================================
-Step 1: Finds the Tipping Point N. Keeps (N) and (N-1) alive.
-Step 2: Sweeps heavy damping to find the plateau/noise floor for both.
-Step 3: Sweeps lambdas AND threshold brackets for both orders to find 
-        the absolute best global configuration.
-
-Update: Steps 2 and 3 were found ineffective in practice and are retained
-below only as legacy reference code. The active Stage 3 optimizer now runs
-only the Step 1 order-N test. Stage 4 owns the regularization defaults.
+Compares order diagnostics to recommend a maximum solve order.
 """
 
 import os
@@ -35,14 +28,6 @@ except ImportError as e:
     sys.exit(f"Error: Could not import required solver modules. {e}")
 
 # =============================================================================
-# DEBUG/TESTING SETTINGS
-# =============================================================================
-# Set to an integer to force Step 2 to use a specific order_N, e.g., 13.
-MANUAL_STEP2_ORDER = None
-
-FIXED_NOISE_FLOOR_START_DB = -30.0
-FIXED_NOISE_FLOOR_MAX_DB = -40.0
-FIXED_MAX_LAMBDA = 0.000001
 SFS_ACCEPTABLE_RATIO_DB = 20.0
 NO_SEPARATION_NOTE = (
     'No tested order produces Int/Ext separation greater than 20 dB. '
@@ -65,12 +50,12 @@ Stage 4 already limits order at lower frequencies, so assessing the usable upper
 band avoids diluting high-order contributions. Octave resolution controls all
 diagnostics; finer sampling can reveal narrower details and takes longer.
 
-Top graph: Solve Stability
+Top graph: Source to Room Field Ratio
 Above the reflection-free time-window (RFT) boundary, time windowing removes
 reflections. Little energy should remain in the external field, so Int/Ext should
 be large. A ratio above 20 dB is our suitability rule of thumb, not proof of
-accuracy or a direct numerical condition number. This is the primary selection
-metric whenever the band permits its use and at least one tested order exceeds
+accuracy or a direct numerical condition number. This sets the eligibility
+threshold whenever the band permits its use and at least one tested order exceeds
 20 dB. Below RFT, real environmental sound can remain in the external field;
 the ratio stays visible for inspection but is not used for selection.
 
@@ -88,14 +73,16 @@ is omitted. A denser grid is not guaranteed to improve the result.
 The dropdown changes this diagnostic and its backup choice, not the ratio knee.
 
 The three choices
-Roll-off knee: the primary choice when Int/Ext is usable. It identifies where
+Roll-off knee: a candidate when Int/Ext is usable. It identifies where
 the ratio's post-peak decline becomes sharper. Detection can be sensitive to
 the shape and rate of decline, so check the curve rather than treating the knee
-as proof of an optimum.
+as proof of an optimum. If the main knee is at or below 20 dB, make one
+gentler second pass and choose the latest earlier knee above 20 dB, confirmed
+by two consecutive declines. This second pass does not use the geometric bend
+fallback or repeatedly relax the criteria.
 
-Soft -25 dB tail: a backup choice, and the recommendation if no eligible knee
-is found. It is the first order below the reference with tail <= -24.5 dB,
-allowing 0.5 dB around the target. When Int/Ext is usable, all offered candidates must exceed 20 dB separation.
+Soft -25 dB tail: the first order below the reference with tail <= -24 dB,
+allowing 1 dB around the target. When Int/Ext is usable, all offered candidates must exceed 20 dB separation.
 
 Directivity change: find the first valid order within 1 dB of the lowest SPL
 change, then step back one order within the valid tested range. It becomes primary when Int/Ext is not usable. Each graph marks its
@@ -105,8 +92,8 @@ Incremental SPL change graph
 The coloured curve shows the 99th percentile of absolute local SPL changes when
 increasing order from N-1 to N. It pools sampled directions and frequencies that
 actually add a degree. This is the level below which 99% of those changes lie;
-isolated peaks have less influence. The saved maximum and its peak-location
-details retain visibility of narrow features affecting fewer than 1% of samples.
+isolated peaks have less influence. The maximum curve retains visibility of
+narrow features affecting fewer than 1% of samples.
 Both fields use the same fixed assessment floor, -40 dB below the previous
 fit's spatial peak at each frequency. A change from -30 to -24 dB counts as 6 dB;
 -46 to -40 counts as zero. Phase-only changes do not count. Capped comparisons
@@ -129,7 +116,8 @@ Only a band whose upper limit is below RFT is reset to the two octaves below tha
 limit. An above-RFT band with poor separation retains the entered limits.
 
 How we recommend an order
-Int/Ext mode: eligible knee first, soft tail as the alternative or fallback.
+Int/Ext mode: recommend the highest order among the eligible knee, sound-power,
+and directivity-change suggestions. Each must exceed 20 dB separation.
 SPL mode: first order within 1 dB of the minimum, then one order back.
 If acceptable separation is achieved only below N4, that is unusually limited
 except perhaps for a subwoofer. Check point count, spatial coverage, positioning,
@@ -137,15 +125,16 @@ windowing and the test band; re-measure if needed. These are practical heuristic
 not stability guarantees.
 
 Select a choice, then click Use in Stage 4. The radio buttons control the actual
-order transferred. All plots and peak details are retained for inspection.
+order transferred. The combined results plot is saved for later inspection.
 """
 
 
-def stage3_order_choices(orders, ratios, residuals, knee, tail_db, reference_n, tail_only=False):
-    if tail_only:
+def stage3_order_choices(orders, ratios, residuals, knee, tail_db, reference_n,
+                         tail_only=False, manual_reference=False):
+    if tail_only and not manual_reference:
         return {}  # SPL-mode choices come directly from the percentile curve.
     selected = {'knee': knee['n'] if knee and not tail_only else None}
-    for key, threshold in [('tail', -24.5)]:
+    for key, threshold in [('tail', -24.0)]:
         tails = [n for n, db in zip(orders, tail_db) if reference_n is not None and n < reference_n and not np.isnan(db) and db <= threshold]
         selected[key] = min(tails) if tails else None
     result = {}
@@ -153,7 +142,8 @@ def stage3_order_choices(orders, ratios, residuals, knee, tail_db, reference_n, 
         if n is None:
             continue
         idx = list(orders).index(n)
-        if not tail_only and (not np.isfinite(ratios[idx]) or ratios[idx] <= SFS_ACCEPTABLE_RATIO_DB):
+        if (not tail_only and
+                (not np.isfinite(ratios[idx]) or ratios[idx] <= SFS_ACCEPTABLE_RATIO_DB)):
             continue
         result[key] = {'n': n, 'ratio': ratios[idx], 'err': residuals[idx],
                        'tail_db': tail_db[idx],
@@ -171,8 +161,9 @@ def stage3_test_band(start_hz, end_hz, rft_hz=None):
 
 
 def recommended_stage3_choice(options):
+    """Choose the highest pre-qualified order; keep style priority for ties."""
     keys = [key for key in STAGE3_CHOICE_STYLES if key in options]
-    return keys[0] if keys else None
+    return max(keys, key=lambda key: options[key]['n']) if keys else None
 
 
 def select_spl_tail_reference(orders, ratios, diagnostic):
@@ -298,7 +289,7 @@ def format_stage3_order_axis(ax):
 def format_stage3_ratio_axis(ax, inspection_only=False):
     subtitle = ('Outside the usable separation range: shown for inspection only.\n'
                 'Not used to choose the solve order.' if inspection_only else RATIO_EXPLAINER)
-    ax.set_title('Solve Stability', fontsize=12, fontweight='bold', pad=32)
+    ax.set_title('Source to Room Field Ratio', fontsize=12, fontweight='bold', pad=32)
     ax.text(.5, 1.02, subtitle, transform=ax.transAxes, ha='center', va='bottom', fontsize=8)
     format_stage3_order_axis(ax)
     ax.tick_params(axis='x', labelbottom=True)
@@ -410,6 +401,39 @@ def find_rolloff_knee(orders, ratios):
         'method': 'post-peak first sustained decline acceleration',
     }
 
+def find_eligible_rolloff_knee(orders, ratios):
+    """Preserve the normal knee; retry a rejected knee once with gentler slopes."""
+    first = find_rolloff_knee(orders, ratios)
+    if first is None or first['ratio'] > SFS_ACCEPTABLE_RATIO_DB:
+        return first
+    pairs = sorted((float(n), float(r)) for n, r in zip(orders, ratios)
+                   if np.isfinite(n) and np.isfinite(r))
+    ns, rs = np.asarray(pairs).T
+    peak = int(np.argmax(rs))
+    drops = -np.diff(rs[peak:]) / np.diff(ns[peak:])
+    # One bounded sensitivity reduction: 5% rather than 15%, and a quarter
+    # of the original absolute acceleration floor. Require two real segments.
+    extra = max(0.02, 0.0015 * float(np.ptp(rs)))
+    candidates = []
+    for j in range(1, len(drops) - 1):
+        idx = peak + j
+        if ns[idx + 2] >= first['n'] or rs[idx] <= SFS_ACCEPTABLE_RATIO_DB:
+            continue
+        previous = drops[:j][drops[:j] > 0]
+        if not len(previous):
+            continue
+        baseline = max(float(np.median(previous)), 0.05)
+        current, following = drops[j:j+2]
+        if (current >= baseline * 1.05 and current - baseline >= extra
+                and min(current, following) >= baseline + extra * 0.25):
+            candidates.append(dict(
+                n=int(ns[idx]), ratio=float(rs[idx]), distance=float(current-baseline),
+                peak_n=int(ns[peak]), peak_ratio=float(rs[peak]),
+                method='latest earlier sustained decline, gentler second pass',
+                initial_knee_n=first['n'], initial_knee_ratio=first['ratio']))
+    return candidates[-1] if candidates else None
+
+
 def _stage3_recommendation_markers(options=None):
     if options and any(key in options for key in STAGE3_CHOICE_STYLES):
         return [(float(options[key]['n']), float(options[key]['ratio']), color, marker, label)
@@ -509,19 +533,11 @@ def plot_internal_tail_power(ax, orders, power_db, reference):
             label="_nolegend_")
     ax.axhline(-20, color="#777777", linestyle="--", label="-20 dB = 1%")
     ax.axhline(-30, color="#777777", linestyle="--", alpha=.65, label="-30 dB = 0.1%")
-    if reference.get('tail_only'):
-        qualifier = 'manual reference' if reference.get('manual') else reference.get('label', 'provisional SPL reference, backed off one order')
-    elif reference.get('manual'):
-        qualifier = "manual selection" + ("; below >20 dB threshold" if reference['ratio'] <= SFS_ACCEPTABLE_RATIO_DB else "")
-    else:
-        qualifier = "best-ratio fallback; no fit >20 dB" if reference['fallback'] else "highest order >20 dB"
-    reference_label = (f"Reference N={reference['n']}: {qualifier}; separation not assessed" if reference.get('tail_only')
-                       else f"Reference N={reference['n']}: {reference['ratio']:.2f} dB Int/Ext ({qualifier})")
-    if reference_n is None:
-        reference_label = 'No automatic reference available; see the diagnostic note or select manually'
-    ax.set_title(TAIL_EXPLAINER, fontsize=12, fontweight='bold', pad=22)
+    ax.set_title(TAIL_EXPLAINER, fontsize=12, fontweight='bold', pad=32)
+    ax.text(.5, 1.02,
+            'Total sound power discarded by stopping at order N, compared with the selected reference order.',
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=8)
     format_stage3_order_axis(ax)
-    ax.set_xlabel(ax.get_xlabel() + '\n' + reference_label, fontsize=8)
     ax.set_ylabel("Discarded internal power (dB)")
     ax.set_xticks(orders)
     if len(orders):
@@ -643,6 +659,27 @@ def _stage3_thread_workers(task_count):
     return max(1, min(task_count, cpu_count))
 
 
+def _collect_with_progress(results, total, label, item_name='tasks', weights=None):
+    """Collect an ordered map iterator with an in-place progress counter."""
+    collected = []
+    completed = 0
+    report_step = max(1, int(np.ceil(total / 10)))
+    next_report = report_step
+    sys.stdout.write(f"\r{label}: 0 of {total} {item_name}")
+    sys.stdout.flush()
+    for index, result in enumerate(results):
+        collected.append(result)
+        completed += weights[index] if weights is not None else 1
+        if completed >= next_report or completed >= total:
+            sys.stdout.write(f"\r{label}: {completed} of {total} {item_name}")
+            sys.stdout.flush()
+            while next_report <= completed:
+                next_report += report_step
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return collected
+
+
 def select_stage3_frequency_indices(freqs, start_hz, end_hz, octave_resolution=12):
     """Nearest available bins to 1/x-octave targets; 0 selects every bin.
 
@@ -676,9 +713,6 @@ def run_open_branch_optimizer(
     input_dir_opti: str,
     input_filename_opti: str,
     test_order_range: tuple,
-    test_start_db_range: tuple,
-    test_lambda_range: tuple,
-    test_db_transition_span: float,
     freq_start_hz: float = 10000.0,
     freq_end_hz: float = 20000.0,
     use_optimized_origins: bool = False,
@@ -763,14 +797,17 @@ def run_open_branch_optimizer(
         print(f"Stage 3 parallel backend: {backend} pool ({len(tasks)} tasks{worker_msg})")
 
         if use_process_pool and process_pool is not None:
-            raw_results = list(process_pool.map(_worker, tasks))
+            raw_results = _collect_with_progress(
+                process_pool.map(_worker, tasks), len(tasks), 'Stage 3 solve progress')
         elif use_process_pool:
             ctx = multiprocessing.get_context('spawn')
             with concurrent.futures.ProcessPoolExecutor(max_workers=6, mp_context=ctx) as ex:
-                raw_results = list(ex.map(_worker, tasks))
+                raw_results = _collect_with_progress(
+                    ex.map(_worker, tasks), len(tasks), 'Stage 3 solve progress')
         else:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-                raw_results = list(ex.map(_worker, tasks))
+                raw_results = _collect_with_progress(
+                    ex.map(_worker, tasks), len(tasks), 'Stage 3 solve progress')
             
         agg = {}
         for task, r in zip(tasks, raw_results):
@@ -813,35 +850,8 @@ def run_open_branch_optimizer(
     # Solve the N-1 baseline in the same pool, without adding it to sweep candidates.
     baseline_n = orders[0] - 1
     solve_orders = [baseline_n] + orders if spl_change_enabled and baseline_n >= 0 else orders
-    configs_s1 = [(n, -50.0, -50.0 - test_db_transition_span, 1e-10) for n in solve_orders]
+    configs_s1 = [(n, -50.0, -70.0, 0.0) for n in solve_orders]
     res_s1 = run_batch(configs_s1)
-    spl_change = None
-    if spl_change_enabled:
-        print(f"Evaluating internal SPL changes on a {spl_radius_m:g} m sphere ({spl_sphere_points} points)...")
-        evaluation_tasks = []
-        for k in test_indices:
-            f = float(f_all[k])
-            fits = {n: fit_records.get((n, f)) for n in [baseline_n] + orders}
-            evaluation_tasks.append((f, orders, fits, speed_of_sound, origins_mm[k]/1000,
-                                     spl_sphere_points, spl_radius_m, spl_floor_db))
-        executor = concurrent.futures.ProcessPoolExecutor if use_process_pool else concurrent.futures.ThreadPoolExecutor
-        # Limit evaluation concurrency: each worker builds its own spherical basis.
-        kwargs = {'max_workers': min(4, len(evaluation_tasks), os.cpu_count() or 1)}
-        if use_process_pool:
-            kwargs['mp_context'] = multiprocessing.get_context('spawn')
-        if use_process_pool and process_pool is not None:
-            from stage3_spl_change import evaluate_frequency_chunk
-            chunks = [evaluation_tasks[i::kwargs['max_workers']] for i in range(kwargs['max_workers'])]
-            frequency_results = [result for chunk in process_pool.map(evaluate_frequency_chunk, chunks)
-                                 for result in chunk]
-        else:
-            with executor(**kwargs) as ex:
-                frequency_results = list(ex.map(evaluate_frequency_changes, evaluation_tasks))
-        spl_change = summarize_changes(orders, frequency_results, spl_sphere_points, spl_radius_m, spl_floor_db, len(test_indices))
-        spl_change['sample_frequencies_hz'] = f_all[test_indices].tolist()
-        spl_change['test_band_hz'] = [freq_start_hz, freq_end_hz]
-        fit_records.clear()
-    
     print(f"{'Order N':<10} | {'Int/Ext Ratio (dB)':<20} | {'Residual %':<12} | {'Delta Ratio'}")
     print("-" * 65)
     
@@ -855,7 +865,7 @@ def run_open_branch_optimizer(
     prev_ratio = None
     
     for n in orders:
-        data = res_s1[(n, -50.0, -50.0 - test_db_transition_span, 1e-10)]
+        data = res_s1[(n, -50.0, -70.0, 0.0)]
         ratio = data['ratio_db']
         delta = (ratio - prev_ratio) if prev_ratio is not None else 0.0
         
@@ -887,7 +897,10 @@ def run_open_branch_optimizer(
             mode_note = NO_SEPARATION_NOTE + ' ' + mode_note
         for data in res_s1.values():
             data['internal_degree_shares'] = data['limited_degree_shares']
-    rolloff_knee = None if tail_only else find_rolloff_knee(n_vals, ratio_vals)
+    rolloff_knee = None if tail_only else find_eligible_rolloff_knee(n_vals, ratio_vals)
+    if rolloff_knee and 'initial_knee_n' in rolloff_knee:
+        print(f"=> Initial knee N={rolloff_knee['initial_knee_n']} was at or below 20 dB; "
+              f"gentler earlier knee selected at N={rolloff_knee['n']} ({rolloff_knee['ratio']:.2f} dB)")
     if not tail_only and best_sfs_ratio <= 0:
         print("WARNING: No positive Int/Ext ratio was found. Sound field separation may not be ideal; re-consider measurement settings.")
     elif not tail_only and best_sfs_ratio <= SFS_ACCEPTABLE_RATIO_DB:
@@ -900,15 +913,58 @@ def run_open_branch_optimizer(
     else:
         print("=> Order N at roll-off start: not detected")
 
+    spl_change = None
+    if spl_change_enabled:
+        print(f"Evaluating internal SPL changes on a {spl_radius_m:g} m sphere ({spl_sphere_points} points)...")
+        evaluation_tasks = []
+        for k in test_indices:
+            f = float(f_all[k])
+            fits = {n: fit_records.get((n, f)) for n in [baseline_n] + orders}
+            evaluation_tasks.append((f, orders, fits, speed_of_sound, origins_mm[k]/1000,
+                                     spl_sphere_points, spl_radius_m, spl_floor_db))
+        executor = concurrent.futures.ProcessPoolExecutor if use_process_pool else concurrent.futures.ThreadPoolExecutor
+        # Limit evaluation concurrency: each worker builds its own spherical basis.
+        kwargs = {'max_workers': min(4, len(evaluation_tasks), os.cpu_count() or 1)}
+        if use_process_pool:
+            kwargs['mp_context'] = multiprocessing.get_context('spawn')
+        if use_process_pool and process_pool is not None:
+            from stage3_spl_change import evaluate_frequency_chunk
+            chunks = [evaluation_tasks[i::kwargs['max_workers']] for i in range(kwargs['max_workers'])]
+            completed_chunks = _collect_with_progress(
+                process_pool.map(evaluate_frequency_chunk, chunks), len(evaluation_tasks),
+                'Stage 3 directivity progress', item_name='frequencies',
+                weights=[len(chunk) for chunk in chunks])
+            frequency_results = [result for chunk in completed_chunks for result in chunk]
+        else:
+            with executor(**kwargs) as ex:
+                frequency_results = _collect_with_progress(
+                    ex.map(evaluate_frequency_changes, evaluation_tasks), len(evaluation_tasks),
+                    'Stage 3 directivity progress', item_name='frequencies')
+        spl_change = summarize_changes(orders, frequency_results, spl_sphere_points, spl_radius_m, spl_floor_db, len(test_indices))
+        spl_change['sample_frequencies_hz'] = f_all[test_indices].tolist()
+        spl_change['test_band_hz'] = [freq_start_hz, freq_end_hz]
+        fit_records.clear()
+        print("Sphere directivity-change evaluation complete (initial order sweep).")
+
     tail_reference = (dict(n=None, ratio=None, fallback=True, tail_only=True, method='Tail power not used in SPL selection mode')
                       if tail_only else select_tail_reference(n_vals, ratio_vals))
     tail_reference['ratio_note'] = ratio_note
     if tail_reference['n'] is not None:
-        reference_data = res_s1[(tail_reference['n'], -50.0, -50.0 - test_db_transition_span, 1e-10)]
+        reference_data = res_s1[(tail_reference['n'], -50.0, -70.0, 0.0)]
         tail_power_vals, tail_count = calc_cumulative_tail(n_vals, tail_reference['n'], reference_data['internal_degree_shares'])
     else:
         tail_power_vals, tail_count = [np.nan] * len(n_vals), 0
     tail_reference['sample_count'] = tail_count
+    tail_by_reference = {}
+    for n, ratio in zip(n_vals, ratio_vals):
+        sample_shares = res_s1[(n, -50.0, -70.0, 0.0)]['internal_degree_shares']
+        values, count = calc_cumulative_tail(n_vals, n, sample_shares)
+        tail_by_reference[str(n)] = {'n': n, 'ratio': ratio, 'sample_count': count, 'power_db': values}
+    print(f"Cumulative tail reference: N={tail_reference['n']} ({tail_count}/{len(test_indices)} frequencies); "
+          + tail_reference.get('method', 'best-ratio fallback' if tail_reference['fallback'] else 'highest order >20 dB'))
+    for n, db in zip(n_vals, tail_power_vals):
+        print(f"  Stop at N={n}: discarded internal tail {db:.2f} dB")
+
     options = stage3_order_choices(n_vals, ratio_vals, err_vals, rolloff_knee, tail_power_vals, tail_reference['n'], tail_only=tail_only)
     spl_options, spl_reason = select_spl_order_choices(n_vals, ratio_vals, err_vals, spl_change)
     spl_option = spl_options.get('spl')
@@ -926,22 +982,13 @@ def run_open_branch_optimizer(
                       convergence_note=v['convergence_note'])
             for key, v in options.items() if key == 'spl'}
     chosen_key = recommended_stage3_choice(options)
+
     recommended = options[chosen_key] if chosen_key else None
     recommended_N = recommended['n'] if recommended else None
-    recommendation_reason = ('Int/Ext roll-off knee is primary; sound power and directivity change are backup recommendations.'
+    recommendation_reason = ('The highest eligible order among the Int/Ext, sound-power and directivity-change suggestions is recommended; each exceeds 20 dB separation.'
                              if recommended else 'No candidate exceeds 20 dB separation. Adjust the test frequency range or check windowing, measurement quality and grid coverage; re-measure if needed.')
     if tail_only:
         recommendation_reason = spl_reason
-    tail_by_reference = {}
-    for n, ratio in zip(n_vals, ratio_vals):
-        sample_shares = res_s1[(n, -50.0, -50.0 - test_db_transition_span, 1e-10)]['internal_degree_shares']
-        values, count = calc_cumulative_tail(n_vals, n, sample_shares)
-        tail_by_reference[str(n)] = {'n': n, 'ratio': ratio, 'sample_count': count, 'power_db': values}
-    print(f"Cumulative tail reference: N={tail_reference['n']} ({tail_count}/{len(test_indices)} frequencies); "
-          + tail_reference.get('method', 'best-ratio fallback' if tail_reference['fallback'] else 'highest order >20 dB'))
-    for n, db in zip(n_vals, tail_power_vals):
-        print(f"  Stop at N={n}: discarded internal tail {db:.2f} dB")
-
     print("\n" + "="*65)
     print(" FINAL ORDER N RECOMMENDATION")
     print("="*65)
@@ -949,9 +996,6 @@ def run_open_branch_optimizer(
     print(recommendation_reason)
     print(f"Rule of thumb: Int/Ext SFS ratio greater than {SFS_ACCEPTABLE_RATIO_DB:.0f} dB has been found to produce acceptable results.")
     print("="*65)
-
-    elapsed = time.time() - start_time
-    print(f"\nStage 3 processing completed in {elapsed:.2f} seconds.")
 
     warning = ""
     if not recommended:
@@ -980,6 +1024,9 @@ def run_open_branch_optimizer(
         print(f"Stage 3 order sweep plot saved to: {saved_plot}")
     if spl_change is not None and saved_plot:
         spl_change['plot_path'] = saved_plot
+
+    elapsed = time.time() - start_time
+    print(f"\nStage 3 processing completed in {elapsed:.2f} seconds.")
 
     return {
         'options': {
@@ -1029,9 +1076,6 @@ def main():
         input_dir_opti=config_process.INPUT_DIR_OPTI,
         input_filename_opti=config_process.INPUT_FILENAME_OPTI,
         test_order_range=config_process.TEST_ORDER_RANGE,
-        test_start_db_range=config_process.TEST_START_DB_RANGE,
-        test_lambda_range=config_process.TEST_LAMBDA_RANGE,
-        test_db_transition_span=config_process.TEST_DB_TRANSITION_SPAN,
         use_optimized_origins=getattr(config_process, 'USE_OPTIMIZED_ORIGINS', False),
         speed_of_sound=getattr(config_process, 'SPEED_OF_SOUND', 343.0),
         kr_offset=KR_OFFSET,

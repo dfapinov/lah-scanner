@@ -78,9 +78,6 @@ TEST_ORDER_RANGE    = (4, 15)           # (min_N, max_N)
 TEST_OCTAVE_RESOLUTION = 12             # 1/x octave spacing; 0 tests all positive bins
 TEST_SPL_SPHERE_POINTS = 1000
 TEST_SPL_RADIUS_M = 1.0
-TEST_START_DB_RANGE = (-20.0, -60.0)    # (highest_dB, lowest_dB) automated in 5dB steps
-TEST_LAMBDA_RANGE   = (0.0000001, 0.01)      # (min_lambda, max_lambda) logarithmic test steps
-TEST_DB_TRANSITION_SPAN  = 20.0              # The dB range between start of damping and maximum damping
 
 
 """ Stage 4 - Spherical Harmonic Expansion Solver """

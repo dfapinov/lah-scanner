@@ -1,4 +1,4 @@
-# Optimizing order N and Reguarlization
+# Optimizing order N and Regularization
 The purpose of this script is to find the **optimal solver settings** in terms of the maximum expansion order ($N$), regularization thresholds (dB), and the damping factor ($\lambda$).
 
 ### Finding the Optimal Order ($N$)
@@ -42,3 +42,19 @@ If this damping is applied at too high a dB threshold (e.g., -6dB) where it affe
 The final step is to test for the ideal strength of the damping ($\lambda$) to apply only below that threshold. Finding this combination is the **sweet spot**: it allows us to extract a little extra spatial detail while safely avoiding ill-conditioning.
 
 Ultimately, the effect of this regularization is to soften the onset of instability as the order $N$ increases. It is not strictly required for a solve, but it acts as a safety net to make the pipeline more robust. If the input data set is of excellent quality, the role of regularization is reduced.
+
+### Current experimental implementation
+
+Threshold mapping uses the tested order whose initial mean Int/Ext separation
+is closest to 15 dB. Nonfinite ratios are excluded and ties use the lower order.
+Lambda and transition span are then tuned at the recommended solve orders.
+The probe does not prove that the solve is near instability, especially when
+frequency-dependent kr limits cap the effective order. See [Stage 3 help](stage3_help.md) for the search
+and scoring details. The optimization remains experimental and is skipped when
+Int/Ext is not usable for order selection.
+
+More precisely, the solver's thresholds act on singular values relative to the
+largest singular value, not directly on coefficient amplitudes. Its filter is
+`s / (s**2 + lambda_i)`, with damping increasing for weaker singular modes.
+The threshold found by this sweep is an empirical damping threshold, not a
+measurement of the recording's physical noise floor.

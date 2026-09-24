@@ -26,6 +26,7 @@ import time
 import importlib
 import re
 from concurrent.futures import ThreadPoolExecutor
+from session_pool import borrow_pool
 from datetime import datetime
 from typing import Optional, Tuple, Dict
 from multiprocessing import Pool, cpu_count, get_context
@@ -62,6 +63,7 @@ def _get_table_limit(f_hz: float, use_manual_table: bool, manual_order_table: di
         if f_hz <= cutoff:
             return manual_order_table[cutoff]
     return manual_order_table[sorted_cuts[-1]]
+
 
 # =============================================================================
 # --- Worker Wrapper ---
@@ -125,7 +127,10 @@ def _worker_wrapper(args: Tuple) \
     pct_err = resid_norm / max(base_norm, 1e-20) * 100.0
     
     if cfg['condition_metrics']:
-        log_msg = f"{f:6.2f} Hz N={final_N} Resid={pct_err:.2f}% Pre-Cond={metrics['cond_pre']:.2e} Post-Cond={metrics['cond_post']:.2e} -> {stop_reason}"
+        if cfg.get('max_lambda', 0.0) > 0.0:
+            log_msg = f"{f:6.2f} Hz N={final_N} Resid={pct_err:.2f}% Pre-Cond={metrics['cond_pre']:.2e} Post-Cond={metrics['cond_post']:.2e} -> {stop_reason}"
+        else:
+            log_msg = f"{f:6.2f} Hz N={final_N} Resid={pct_err:.2f}% Condition Number={metrics['cond_pre']:.2e} -> {stop_reason}"
     else:
         log_msg = f"{f:6.2f} Hz N={final_N} Resid={pct_err:.2f}% -> {stop_reason}"
 
@@ -144,7 +149,7 @@ def run_she_solve(
     manual_order_table: dict = None,
     noise_floor_start_db: float = -30.0,
     noise_floor_max_db: float = -50.0,
-    max_lambda: float = 0.000001,
+    max_lambda: float = 0.0,
     condition_metrics: bool = True,
     use_optimized_origins: bool = True,
     save_to_disk: bool = True,
@@ -268,7 +273,7 @@ def run_she_solve(
 
     if use_process_pool:
         ctx = get_context('spawn')
-        with ctx.Pool(
+        with borrow_pool(jobs) or ctx.Pool(
             processes=jobs,
             initializer=_init_worker,
             initargs=(log_file_path,)
@@ -360,6 +365,7 @@ def main() -> None:
 
     p = argparse.ArgumentParser(description="Stage 2 – SHE Solver Driver.")
     p.add_argument("-j", "--jobs", type=int, default=max(1, cpu_count() // 2), help="number of parallel processes")
+    p.add_argument("--regularization", action="store_true", help="enable experimental damping from config_process")
     args = p.parse_args()
 
     project_root = os.path.dirname(importlib.import_module("config_process").__file__)
@@ -376,7 +382,7 @@ def main() -> None:
         use_manual_table=USE_MANUAL_TABLE,
         noise_floor_start_db=NOISE_FLOOR_START_DB,
         noise_floor_max_db=NOISE_FLOOR_MAX_DB,
-        max_lambda=MAX_LAMBDA,
+        max_lambda=MAX_LAMBDA if args.regularization else 0.0,
         condition_metrics=CONDITION_METRICS,
         use_optimized_origins=USE_OPTIMIZED_ORIGINS,
         save_to_disk=True,

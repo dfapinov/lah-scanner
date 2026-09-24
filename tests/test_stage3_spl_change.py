@@ -70,7 +70,6 @@ def test_real_solver_incremental_diagnostic_preserves_existing_sweep(monkeypatch
         freqs=np.array([2000.]), complex_data={n: np.array([pressure[i]]) for i, n in enumerate(names)},
         filenames=names, r_arr=radius, th_arr=theta, ph_arr=phi, origins_mm=None))
     args = dict(input_dir_opti=str(tmp_path), input_filename_opti='synthetic.npz', test_order_range=(2, 3),
-                test_start_db_range=(-20, -60), test_lambda_range=(1e-7, .01), test_db_transition_span=20,
                 freq_start_hz=2000, freq_end_hz=2000, use_process_pool=True, spl_sphere_points=64)
     result = stage3.run_open_branch_optimizer(**args)
     control = stage3.run_open_branch_optimizer(**args, spl_change_enabled=False, spl_floor_db=-12, save_plot=False)

@@ -14,6 +14,7 @@ import sys
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from session_pool import borrow_pool
 from pathlib import Path
 from typing import List, Tuple, Union, Dict
 
@@ -179,6 +180,8 @@ def evaluate_she_field(
                 sys.stdout.flush()
 
     if use_process_pool:
+        if process_pool is None:
+            process_pool = borrow_pool(num_cpus)
         if process_pool is not None:
             consume_results(process_pool.imap(func=_worker_calc_chunk, iterable=tasks))
         else:
@@ -247,7 +250,7 @@ class PressureEvaluationSession:
         self._pool = None
         if self.use_process_pool:
             ctx = multiprocessing.get_context('spawn')
-            self._pool = ctx.Pool(processes=self.worker_count)
+            self._pool = borrow_pool(self.worker_count) or ctx.Pool(processes=self.worker_count)
 
     def evaluate_field(
         self,

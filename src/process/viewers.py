@@ -285,6 +285,9 @@ class FDWViewer:
 class FrequencyBrowser3DView:
     """Pure MVC View for full 3D grid scan validation."""
     def __init__(self, cfg, figsize=(10, 8)):
+        # Match the Stage 5 viewer: azimuth/elevation orbiting allows the
+        # camera to move freely while keeping Z upright (no camera roll).
+        plt.rcParams['axes3d.mouserotationstyle'] = 'azel'
         self.fig = plt.figure(figsize=figsize)
         self.ax = self.fig.add_subplot(111, projection='3d')
         self.fig.subplots_adjust(left=0.05, bottom=0.05, right=0.85, top=0.95) 
@@ -299,14 +302,7 @@ class FrequencyBrowser3DView:
         self.ax.set_ylabel('Y (Width) mm')
         self.ax.set_zlabel('Z (Height) mm')
 
-        self.ax.view_init(elev=30, azim=-45)
-        self.fig.canvas.mpl_connect('motion_notify_event', self._enforce_turntable)
-
-    def _enforce_turntable(self, event):
-        if hasattr(self.ax, 'elev'):
-            elev, azim = self.ax.elev, self.ax.azim
-            if elev > 89.9: self.ax.view_init(elev=89.9, azim=azim)
-            elif elev < -89.9: self.ax.view_init(elev=-89.9, azim=azim)
+        self.ax.view_init(elev=30, azim=-45, roll=0, vertical_axis='z')
 
     def update_view(self, f, grid_3d, xv, yv, zv, final_c, plane, val):
         while self.ax.collections: self.ax.collections[0].remove()
@@ -434,6 +430,9 @@ class FrequencyBrowser3D:
 class CloudBrowser3DView:
     """Pure MVC View for 3D Coordinate Cloud."""
     def __init__(self, cfg, figsize=(8, 6)):
+        # Match the Stage 5 viewer: azimuth/elevation orbiting allows the
+        # camera to move freely while keeping Z upright (no camera roll).
+        plt.rcParams['axes3d.mouserotationstyle'] = 'azel'
         self.fig = plt.figure(figsize=figsize)
         self.ax = self.fig.add_subplot(111, projection='3d')
         self.fig.subplots_adjust(bottom=0.1, left=0.05, right=0.95, top=0.9)
@@ -442,13 +441,8 @@ class CloudBrowser3DView:
         self.ax.set_ylabel('Y (Width) mm')
         self.ax.set_zlabel('Z (Height) mm')
 
-        self.ax.view_init(elev=30, azim=-45)
-        self.fig.canvas.mpl_connect('motion_notify_event', self._enforce_turntable)
+        self.ax.view_init(elev=30, azim=-45, roll=0, vertical_axis='z')
         self.scatter_all, self.scatter_hi = None, None
-
-    def _enforce_turntable(self, event):
-        if hasattr(self.ax, 'elev') and abs(self.ax.elev - 30.0) > 1e-3:
-            self.ax.view_init(elev=30.0, azim=self.ax.azim)
 
     def update_view(self, freqs, pts_x, pts_y, pts_z, active_idx):
         if not freqs: return

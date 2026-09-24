@@ -104,7 +104,7 @@ def _solve_one_frequency(
                 lam_i = active_max_lambda
         
         # Generalized Tikhonov filter weight: s_i / (s_i^2 + lambda_i)
-        w_progressive[i] = s / (s**2 + lam_i)
+        w_progressive[i] = (1.0 / s if s > 0 else 0.0) if lam_i == 0 else s / (s**2 + lam_i)
         effective_lambda_max = max(effective_lambda_max, lam_i)
             
     # Compute solution: x = V * W_progressive * U^H * b
