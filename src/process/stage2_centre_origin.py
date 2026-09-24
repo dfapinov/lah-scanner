@@ -744,9 +744,16 @@ def run_origin_search(
     sweep_results = None
 
     # 2. EITHER read from cache OR execute the sweep
-    if use_cache and os.path.exists(read_cache_file):
-        print(f"Loading data from cache: {read_cache_file}\n")
-        with open(read_cache_file, 'rb') as f:
+    # Anchor a relative cache filename to the writable project data directory
+    # (input_dir_origins). Otherwise it resolves against the current working
+    # directory, which for the installed app is a protected location such as
+    # "C:\Program Files\..." where writes are not permitted.
+    resolved_read_cache_file = read_cache_file
+    if read_cache_file and not os.path.isabs(read_cache_file):
+        resolved_read_cache_file = os.path.join(input_dir_origins, read_cache_file)
+    if use_cache and os.path.exists(resolved_read_cache_file):
+        print(f"Loading data from cache: {resolved_read_cache_file}\n")
+        with open(resolved_read_cache_file, 'rb') as f:
             sweep_results = pickle.load(f)
             
         for i, f_hz in enumerate(sorted(sweep_results.keys())):
@@ -814,7 +821,10 @@ def run_origin_search(
 
     if save_to_disk:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_filename = f"origins_cache_3D_{timestamp}.pkl"
+        # Store the cache alongside the stage input/output data in the writable
+        # project directory rather than the current working directory, which is
+        # read-only (e.g. "C:\Program Files\...") for the installed application.
+        save_filename = os.path.join(input_dir_origins, f"origins_cache_3D_{timestamp}.pkl")
         
         print(f"Saving cache to {save_filename}...")
         with open(save_filename, 'wb') as f:
