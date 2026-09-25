@@ -1,6 +1,7 @@
 # Holographic Acoustic Loudspeaker Scanner (HALS) - Post-Processing Pipeline
 
-**Superseded by HALS Studio**
+**--Superseded by HALS Studio--**
+https://github.com/dfapinov/HALS-Studio
 
 This project is a Python code pipeline for the post-processing of 3D loudspeaker measurement data, representing the core processing component of the community project called **HALS**.
 
